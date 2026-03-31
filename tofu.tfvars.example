@@ -1,0 +1,6 @@
+location          = "centralus"
+name_prefix       = "azurefoxlab"
+vm_admin_username = "azurefox"
+vm_size           = "Standard_D2s_v3"
+vmss_sku          = "Standard_D2s_v3"
+ssh_public_key    = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQexampleReplaceMeWithYourRsaPublicKey"

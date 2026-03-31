@@ -1,0 +1,13 @@
+.terraform/
+.terraform.tfstate.lock.info
+terraform.tfstate
+terraform.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+__pycache__/
+*.pyc
+.DS_Store
+crash.log
+crash.*.log
+proof-artifacts/
+*.tfplan
