@@ -31,7 +31,20 @@ The lab is designed to trigger or validate the current AzureFox checkpoint:
 - `keyvault`
 - `storage`
 - `vms`
+- `nics`
+- `dns`
+- `endpoints`
+- `network-ports`
+- `workloads`
+- `app-services`
+- `functions`
+- `api-mgmt`
+- `aks`
+- `acr`
+- `databases`
 - `all-checks --section identity`
+- `all-checks --section network`
+- `all-checks --section compute`
 - `all-checks --section config`
 - `all-checks --section secrets`
 - `all-checks --section resource`
@@ -61,6 +74,12 @@ The project is OpenTofu-first, but the HCL stays Terraform-familiar on purpose. 
 - One Linux App Service with a system-assigned identity and a plain-text sensitive setting
 - One Linux Function App with system-assigned plus user-assigned identity and a Key Vault-backed app setting
 - One Linux App Service with attached identity and intentionally empty app settings
+- One subnet-level NSG allow rule on the workload subnet so `network-ports` has explicit public-ingress evidence for the public VM
+- One API Management service with a system-assigned identity plus one API, one backend, and one named value
+- One AKS cluster with a public control-plane endpoint and system-assigned identity
+- One Azure Container Registry with public network access and admin user enabled
+- One Azure SQL server with one user database
+- One public DNS zone plus one private DNS zone with a registration-enabled VNet link
 - Three deployment-history proof objects:
   one succeeded subscription deployment with linked template URI
   one succeeded resource-group deployment with linked parameters URI
@@ -84,7 +103,20 @@ That combination is enough for AzureFox to surface:
 - Key Vault public-network, private-endpoint, and purge-protection posture from `keyvault`
 - public storage and open firewall findings from `storage`
 - a public VM with an attached identity from `vms`
+- NIC attachment and public-IP reference proof from `nics`
+- public IP and Azure-managed hostname visibility from `endpoints`
+- NIC-backed public ingress evidence from `network-ports`
+- a joined compute plus web workload census from `workloads`
+- App Service hostname, identity, and posture inventory from `app-services`
+- Function App hostname, identity, and deployment-signal inventory from `functions`
+- API Management hostname, inventory-count, and identity visibility from `api-mgmt`
+- AKS control-plane endpoint and identity visibility from `aks`
+- ACR login-server, auth posture, and identity visibility from `acr`
+- Azure SQL endpoint and visible user-database inventory from `databases`
+- DNS zone inventory, record-set totals, delegation counts, and private-link counts from `dns`
 - identity checkpoint orchestration artifacts from `all-checks --section identity`
+- network checkpoint orchestration artifacts from `all-checks --section network`
+- compute checkpoint orchestration artifacts from `all-checks --section compute`
 - config checkpoint orchestration artifacts from `all-checks --section config`
 - secrets checkpoint orchestration artifacts from `all-checks --section secrets`
 - resource checkpoint orchestration artifacts from `all-checks --section resource`
@@ -202,6 +234,8 @@ By default the validator:
 - executes AzureFox from `--azurefox-dir`
 - runs the current AzureFox command set covered by this lab
 - runs `all-checks --section identity`
+- runs `all-checks --section network`
+- runs `all-checks --section compute`
 - runs `all-checks --section config`
 - runs `all-checks --section secrets`
 - runs `all-checks --section resource`
@@ -219,7 +253,7 @@ Artifacts include:
 
 - one JSON payload per AzureFox command
 - copied loot files emitted by AzureFox
-- `all-checks --section <section>` output plus `run-summary.json` for `identity`, `config`, `secrets`, and `resource`
+- `all-checks --section <section>` output plus `run-summary.json` for `identity`, `network`, `compute`, `config`, `secrets`, and `resource`
 - `summary.json`
 - `summary.txt`
 - `azurefox-mismatch-report.md`
@@ -239,6 +273,10 @@ What AzureFox can prove directly from read-only control-plane and Graph data:
 - that deployment history recorded outputs, linked template or parameters URIs, and failure state metadata
 - that App Service and Function App settings expose plain-text or Key Vault-backed configuration paths
 - that managed-identity token surfaces correlate across web workloads, VMs, and deployment history
+- that Azure-managed App Service and Function App hostnames are visible control-plane endpoint paths, not proven live ingress
+- that NIC-backed public ingress evidence comes from visible NSG allow rules rather than guessed reachability
+- that API Management, AKS, ACR, and Azure SQL service inventory stays evidence-based when only management metadata is visible
+- that DNS v1 proves zone inventory, visible record-set totals, delegation, and VNet-link counts only
 
 What only the lab can confirm once infrastructure exists and behavior is exercised:
 
@@ -257,6 +295,7 @@ What this phase does not attempt to prove:
 - actual Key Vault secret retrieval through a running workload
 - live IMDS or managed-identity token exchange from the workloads themselves
 - private endpoint reachability from inside the virtual network
+- record contents, record-target analysis, or live DNS resolution behavior
 
 ## Destroy
 

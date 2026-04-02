@@ -262,6 +262,190 @@ output "validation_manifest" {
         ]
       }
     }
+    phase3_checkpoint = {
+      all_checks_sections = [
+        "network",
+        "compute",
+        "resource",
+      ]
+      commands = [
+        "nics",
+        "dns",
+        "endpoints",
+        "network-ports",
+        "workloads",
+        "app-services",
+        "functions",
+        "api-mgmt",
+        "aks",
+        "acr",
+        "databases",
+      ]
+      nics = {
+        vm_primary = {
+          attached_asset_name = azurerm_linux_virtual_machine.vm_web.name
+          name                = azurerm_network_interface.vm_web.name
+          public_ip_id        = azurerm_public_ip.vm_web.id
+          subnet_id           = azurerm_subnet.workload.id
+          vnet_id             = azurerm_virtual_network.lab.id
+        }
+      }
+      endpoints = {
+        app_services = [
+          {
+            endpoint          = azurerm_linux_web_app.phase2_empty.default_hostname
+            ingress_path      = "azurewebsites-default-hostname"
+            source_asset_kind = "AppService"
+            source_asset_name = azurerm_linux_web_app.phase2_empty.name
+          },
+          {
+            endpoint          = azurerm_linux_web_app.phase2_public.default_hostname
+            ingress_path      = "azurewebsites-default-hostname"
+            source_asset_kind = "AppService"
+            source_asset_name = azurerm_linux_web_app.phase2_public.name
+          },
+        ]
+        function = {
+          endpoint          = azurerm_linux_function_app.phase2_orders.default_hostname
+          ingress_path      = "azure-functions-default-hostname"
+          source_asset_kind = "FunctionApp"
+          source_asset_name = azurerm_linux_function_app.phase2_orders.name
+        }
+        public_vm = {
+          endpoint          = azurerm_public_ip.vm_web.ip_address
+          exposure_family   = "public-ip"
+          ingress_path      = "direct-vm-ip"
+          source_asset_kind = "VM"
+          source_asset_name = azurerm_linux_virtual_machine.vm_web.name
+        }
+      }
+      network_ports = {
+        ssh = {
+          allow_source_summary = "Internet via subnet-nsg:${azurerm_resource_group.network.name}/${azurerm_network_security_group.workload.name}/${azurerm_network_security_rule.workload_allow_ssh_internet.name}"
+          asset_name           = azurerm_linux_virtual_machine.vm_web.name
+          endpoint             = azurerm_public_ip.vm_web.ip_address
+          port                 = "22"
+          protocol             = "TCP"
+        }
+      }
+      workloads = {
+        expected_assets = [
+          {
+            asset_kind    = "VM"
+            asset_name    = azurerm_linux_virtual_machine.vm_web.name
+            endpoint      = azurerm_public_ip.vm_web.ip_address
+            identity_type = "UserAssigned"
+          },
+          {
+            asset_kind    = "AppService"
+            asset_name    = azurerm_linux_web_app.phase2_empty.name
+            endpoint      = azurerm_linux_web_app.phase2_empty.default_hostname
+            identity_type = "SystemAssigned"
+          },
+          {
+            asset_kind    = "AppService"
+            asset_name    = azurerm_linux_web_app.phase2_public.name
+            endpoint      = azurerm_linux_web_app.phase2_public.default_hostname
+            identity_type = "SystemAssigned"
+          },
+          {
+            asset_kind    = "FunctionApp"
+            asset_name    = azurerm_linux_function_app.phase2_orders.name
+            endpoint      = azurerm_linux_function_app.phase2_orders.default_hostname
+            identity_type = "SystemAssigned, UserAssigned"
+          },
+          {
+            asset_kind    = "VMSS"
+            asset_name    = azurerm_linux_virtual_machine_scale_set.vmss_api.name
+            endpoint      = null
+            identity_type = null
+          },
+        ]
+      }
+      app_services = {
+        expected_assets = [
+          {
+            default_hostname       = azurerm_linux_web_app.phase2_empty.default_hostname
+            https_only             = true
+            name                   = azurerm_linux_web_app.phase2_empty.name
+            public_network_access  = "Enabled"
+            workload_identity_type = "SystemAssigned"
+          },
+          {
+            default_hostname       = azurerm_linux_web_app.phase2_public.default_hostname
+            https_only             = true
+            name                   = azurerm_linux_web_app.phase2_public.name
+            public_network_access  = "Enabled"
+            workload_identity_type = "SystemAssigned"
+          },
+        ]
+      }
+      functions = {
+        orders = {
+          default_hostname          = azurerm_linux_function_app.phase2_orders.default_hostname
+          key_vault_reference_count = 1
+          name                      = azurerm_linux_function_app.phase2_orders.name
+          public_network_access     = "Enabled"
+          workload_identity_type    = "SystemAssigned, UserAssigned"
+        }
+      }
+      api_mgmt = {
+        edge = {
+          api_count               = 1
+          backend_count           = 1
+          gateway_hostname_suffix = ".azure-api.net"
+          name                    = azurerm_api_management.phase3.name
+          named_value_count       = 1
+          public_network_access   = "Enabled"
+          workload_identity_type  = "SystemAssigned"
+        }
+      }
+      aks = {
+        ops = {
+          cluster_identity_type   = "SystemAssigned"
+          name                    = azurerm_kubernetes_cluster.phase3.name
+          private_cluster_enabled = false
+        }
+      }
+      acr = {
+        public = {
+          admin_user_enabled     = true
+          login_server           = azurerm_container_registry.phase3.login_server
+          name                   = azurerm_container_registry.phase3.name
+          public_network_access  = "Enabled"
+          workload_identity_type = "SystemAssigned"
+        }
+      }
+      databases = {
+        primary = {
+          engine                      = "AzureSql"
+          fully_qualified_domain_name = azurerm_mssql_server.phase3.fully_qualified_domain_name
+          name                        = azurerm_mssql_server.phase3.name
+          public_network_access       = "Enabled"
+          user_database_names         = [azurerm_mssql_database.phase3.name]
+        }
+      }
+      dns = {
+        private_zone = {
+          linked_virtual_network_count       = 1
+          minimum_record_set_count           = 1
+          name                               = azurerm_private_dns_zone.phase3_internal.name
+          registration_virtual_network_count = 1
+          zone_kind                          = "private"
+        }
+        public_zone = {
+          expected_name_server_count = 4
+          minimum_record_set_count   = 3
+          name                       = azurerm_dns_zone.phase3_public.name
+          zone_kind                  = "public"
+        }
+      }
+      known_gaps = [
+        "Azure-managed hostnames in endpoints and workloads are visibility proof, not proven live ingress reachability.",
+        "network-ports remains narrow NIC-backed public endpoint evidence and does not prove full effective-network reachability.",
+        "DNS validation in this lab stays at zone metadata, delegation counts, and VNet-link counts rather than record contents or resolver behavior.",
+      ]
+    }
     all_checks_sections = {
       identity = [
         "whoami",
@@ -283,6 +467,22 @@ output "validation_manifest" {
       ]
       resource = [
         "resource-trusts",
+        "api-mgmt",
+        "acr",
+        "databases",
+      ]
+      network = [
+        "nics",
+        "dns",
+        "endpoints",
+        "network-ports",
+      ]
+      compute = [
+        "workloads",
+        "app-services",
+        "functions",
+        "aks",
+        "vms",
       ]
     }
     resource_groups = {
