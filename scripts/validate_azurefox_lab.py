@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,13 +21,33 @@ COMMANDS = [
     "principals",
     "permissions",
     "privesc",
-    "role-trusts",
     "resource-trusts",
     "auth-policies",
     "managed-identities",
     "keyvault",
     "storage",
     "vms",
+    "nics",
+    "dns",
+    "endpoints",
+    "network-ports",
+    "workloads",
+    "app-services",
+    "functions",
+    "api-mgmt",
+    "aks",
+    "acr",
+    "databases",
+    "role-trusts",
+]
+
+ALL_CHECK_SECTION_ORDER = [
+    "config",
+    "secrets",
+    "resource",
+    "network",
+    "compute",
+    "identity",
 ]
 
 AUTH_POLICY_FINDINGS = {
@@ -92,6 +113,23 @@ def run_json(cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> An
         ) from exc
 
 
+def log_progress(message: str) -> None:
+    print(message, flush=True)
+
+
+def ordered_all_checks_sections(sections: list[str]) -> list[str]:
+    preferred_positions = {
+        section: index for index, section in enumerate(ALL_CHECK_SECTION_ORDER)
+    }
+    return sorted(
+        sections,
+        key=lambda section: (
+            preferred_positions.get(section, len(ALL_CHECK_SECTION_ORDER)),
+            section,
+        ),
+    )
+
+
 def read_manifest(lab_dir: Path) -> dict[str, Any]:
     try:
         value = run_json(["tofu", "output", "-json", "validation_manifest"], cwd=lab_dir)
@@ -128,6 +166,8 @@ def run_azurefox(
     loot_root.mkdir(parents=True, exist_ok=True)
 
     for command in COMMANDS:
+        step_started = time.monotonic()
+        log_progress(f"[run] azurefox {command}")
         outdir = artifacts_dir / command
         outdir.mkdir(parents=True, exist_ok=True)
         payload = run_json(
@@ -157,8 +197,13 @@ def run_azurefox(
         target = loot_root / f"{command}.json"
         target.write_text(emitted_loot.read_text(encoding="utf-8"), encoding="utf-8")
         loot_paths[command] = target
+        log_progress(
+            f"[done] azurefox {command} ({time.monotonic() - step_started:.1f}s)"
+        )
 
     for section in all_checks_sections:
+        step_started = time.monotonic()
+        log_progress(f"[run] azurefox all-checks --section {section}")
         checkpoint_dir = artifacts_dir / f"{section}-checkpoint"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         run_summary = run_json(
@@ -190,6 +235,10 @@ def run_azurefox(
         )
         run_summaries[section] = run_summary
         run_summary_paths[section] = run_summary_path
+        log_progress(
+            f"[done] azurefox all-checks --section {section} "
+            f"({time.monotonic() - step_started:.1f}s)"
+        )
 
     return outputs, loot_paths, run_summaries, run_summary_paths
 
@@ -252,6 +301,104 @@ def find_vm(payload: dict[str, Any], vm_name: str) -> dict[str, Any]:
         if asset.get("name") == vm_name:
             return asset
     raise AssertionError(f"VM asset '{vm_name}' not found in vms output")
+
+
+def find_nic(payload: dict[str, Any], nic_name: str) -> dict[str, Any]:
+    for asset in payload.get("nic_assets", []):
+        if asset.get("name") == nic_name:
+            return asset
+    raise AssertionError(f"NIC asset '{nic_name}' not found in nics output")
+
+
+def find_endpoint(
+    payload: dict[str, Any],
+    *,
+    endpoint: str,
+    source_asset_name: str,
+) -> dict[str, Any]:
+    for row in payload.get("endpoints", []):
+        if row.get("endpoint") == endpoint and row.get("source_asset_name") == source_asset_name:
+            return row
+    raise AssertionError(
+        f"endpoints output missing endpoint '{endpoint}' for asset '{source_asset_name}'"
+    )
+
+
+def find_network_port(
+    payload: dict[str, Any],
+    *,
+    asset_name: str,
+    endpoint: str,
+    port: str,
+    protocol: str,
+) -> dict[str, Any]:
+    for row in payload.get("network_ports", []):
+        if (
+            row.get("asset_name") == asset_name
+            and row.get("endpoint") == endpoint
+            and str(row.get("port")) == port
+            and str(row.get("protocol")).upper() == protocol.upper()
+        ):
+            return row
+    raise AssertionError(
+        f"network-ports output missing {protocol} {port} for asset '{asset_name}' on endpoint '{endpoint}'"
+    )
+
+
+def find_workload(payload: dict[str, Any], asset_name: str) -> dict[str, Any]:
+    for workload in payload.get("workloads", []):
+        if workload.get("asset_name") == asset_name:
+            return workload
+    raise AssertionError(f"workloads output missing asset '{asset_name}'")
+
+
+def find_app_service(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("app_services", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"app-services output missing asset '{name}'")
+
+
+def find_function_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("function_apps", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"functions output missing asset '{name}'")
+
+
+def find_api_management_service(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("api_management_services", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"api-mgmt output missing service '{name}'")
+
+
+def find_aks_cluster(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("aks_clusters", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"aks output missing cluster '{name}'")
+
+
+def find_registry(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("registries", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"acr output missing registry '{name}'")
+
+
+def find_database_server(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("database_servers", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"databases output missing server '{name}'")
+
+
+def find_dns_zone(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("dns_zones", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"dns output missing zone '{name}'")
 
 
 def find_trust(
@@ -362,6 +509,7 @@ def validate_outputs(
     vmss_name = manifest["vmss"]["name"]
     role_trusts_manifest = manifest["role_trusts"]
     phase2_manifest = manifest["phase2_checkpoint"]
+    phase3_manifest = manifest["phase3_checkpoint"]
 
     whoami = outputs["whoami"]
     assert_true(whoami["metadata"]["command"] == "whoami", "whoami metadata.command mismatch")
@@ -374,19 +522,16 @@ def validate_outputs(
         inventory.get("resource_group_count", 0) >= rg_count,
         f"inventory reported fewer than {rg_count} resource groups",
     )
+    assert_true(
+        inventory.get("resource_count", 0) >= rg_count,
+        "inventory reported an unexpectedly low resource_count",
+    )
     resource_types = inventory.get("top_resource_types", {})
-    for resource_type in (
-        "Microsoft.Compute/virtualMachines",
-        "Microsoft.Storage/storageAccounts",
-        "Microsoft.Network/networkInterfaces",
-        "Microsoft.KeyVault/vaults",
-        "Microsoft.Web/sites",
-    ):
-        assert_true(
-            resource_type in resource_types,
-            f"inventory missing {resource_type}",
-        )
-    checks.append("inventory exposed the expected lab resource classes")
+    assert_true(
+        isinstance(resource_types, dict) and resource_types,
+        "inventory did not return a usable top_resource_types summary",
+    )
+    checks.append("inventory exposed healthy counts and a usable capped resource-type summary")
 
     rbac = outputs["rbac"]
     owner_assignments = [
@@ -615,6 +760,313 @@ def validate_outputs(
     )
     checks.append("vms reported the public VM, attached identity, and VM scale set")
 
+    nics = outputs["nics"]
+    vm_primary_nic = phase3_manifest["nics"]["vm_primary"]
+    nic_asset = find_nic(nics, vm_primary_nic["name"])
+    assert_true(
+        nic_asset.get("attached_asset_name") == vm_primary_nic["attached_asset_name"],
+        "nics output missing the expected VM attachment on the primary NIC",
+    )
+    assert_true(
+        vm_primary_nic["public_ip_id"] in set(nic_asset.get("public_ip_ids", [])),
+        "nics output missing the public IP reference on the primary NIC",
+    )
+    assert_true(
+        vm_primary_nic["subnet_id"] in set(nic_asset.get("subnet_ids", [])),
+        "nics output missing the workload subnet reference on the primary NIC",
+    )
+    assert_true(
+        vm_primary_nic["vnet_id"] in set(nic_asset.get("vnet_ids", [])),
+        "nics output missing the workload VNet reference on the primary NIC",
+    )
+    checks.append("nics exposed the primary VM NIC attachment, public IP reference, and network placement")
+
+    endpoints = outputs["endpoints"]
+    public_vm_endpoint = phase3_manifest["endpoints"]["public_vm"]
+    public_vm_row = find_endpoint(
+        endpoints,
+        endpoint=public_vm_endpoint["endpoint"],
+        source_asset_name=public_vm_endpoint["source_asset_name"],
+    )
+    assert_true(
+        public_vm_row.get("endpoint_type") == "ip",
+        "endpoints output did not classify the VM endpoint as an IP",
+    )
+    assert_true(
+        public_vm_row.get("exposure_family") == public_vm_endpoint["exposure_family"],
+        "endpoints output public VM exposure family mismatch",
+    )
+    assert_true(
+        public_vm_row.get("ingress_path") == public_vm_endpoint["ingress_path"],
+        "endpoints output public VM ingress path mismatch",
+    )
+    assert_true(
+        public_vm_row.get("source_asset_kind") == public_vm_endpoint["source_asset_kind"],
+        "endpoints output public VM source asset kind mismatch",
+    )
+    for expected in phase3_manifest["endpoints"]["app_services"]:
+        row = find_endpoint(
+            endpoints,
+            endpoint=expected["endpoint"],
+            source_asset_name=expected["source_asset_name"],
+        )
+        assert_true(
+            row.get("endpoint_type") == "hostname",
+            f"endpoints output did not classify '{expected['source_asset_name']}' as a hostname surface",
+        )
+        assert_true(
+            row.get("exposure_family") == "managed-web-hostname",
+            f"endpoints output exposure family drifted for '{expected['source_asset_name']}'",
+        )
+        assert_true(
+            row.get("ingress_path") == expected["ingress_path"],
+            f"endpoints output ingress path drifted for '{expected['source_asset_name']}'",
+        )
+        assert_true(
+            row.get("source_asset_kind") == expected["source_asset_kind"],
+            f"endpoints output source asset kind drifted for '{expected['source_asset_name']}'",
+        )
+    expected_function_endpoint = phase3_manifest["endpoints"]["function"]
+    function_endpoint_row = find_endpoint(
+        endpoints,
+        endpoint=expected_function_endpoint["endpoint"],
+        source_asset_name=expected_function_endpoint["source_asset_name"],
+    )
+    assert_true(
+        function_endpoint_row.get("endpoint_type") == "hostname",
+        "endpoints output did not classify the Function App hostname as a hostname surface",
+    )
+    assert_true(
+        function_endpoint_row.get("exposure_family") == "managed-web-hostname",
+        "endpoints output Function App exposure family drifted",
+    )
+    assert_true(
+        function_endpoint_row.get("ingress_path") == expected_function_endpoint["ingress_path"],
+        "endpoints output Function App ingress path drifted",
+    )
+    checks.append("endpoints surfaced the public VM IP and Azure-managed web hostnames without overstating reachability")
+
+    network_ports = outputs["network-ports"]
+    expected_ssh = phase3_manifest["network_ports"]["ssh"]
+    ssh_row = find_network_port(
+        network_ports,
+        asset_name=expected_ssh["asset_name"],
+        endpoint=expected_ssh["endpoint"],
+        port=expected_ssh["port"],
+        protocol=expected_ssh["protocol"],
+    )
+    assert_true(
+        ssh_row.get("allow_source_summary") == expected_ssh["allow_source_summary"],
+        "network-ports allow_source_summary drifted from the intended subnet NSG proof",
+    )
+    checks.append("network-ports surfaced subnet-NSG-backed ingress evidence for the public VM without inferring full reachability")
+
+    workloads = outputs["workloads"]
+    for expected in phase3_manifest["workloads"]["expected_assets"]:
+        workload = find_workload(workloads, expected["asset_name"])
+        assert_true(
+            workload.get("asset_kind") == expected["asset_kind"],
+            f"workloads asset kind mismatch for '{expected['asset_name']}'",
+        )
+        assert_true(
+            workload.get("identity_type") == expected["identity_type"],
+            f"workloads identity type mismatch for '{expected['asset_name']}'",
+        )
+        expected_endpoint = expected["endpoint"]
+        if expected_endpoint is None:
+            assert_true(
+                not workload.get("endpoints"),
+                f"workloads unexpectedly showed endpoints for '{expected['asset_name']}'",
+            )
+        else:
+            assert_true(
+                expected_endpoint in workload.get("endpoints", []),
+                f"workloads missing endpoint '{expected_endpoint}' for '{expected['asset_name']}'",
+            )
+    checks.append("workloads joined compute and web assets into the expected identity and endpoint census")
+
+    app_services = outputs["app-services"]
+    for expected in phase3_manifest["app_services"]["expected_assets"]:
+        asset = find_app_service(app_services, expected["name"])
+        assert_true(
+            asset.get("default_hostname") == expected["default_hostname"],
+            f"app-services default hostname mismatch for '{expected['name']}'",
+        )
+        assert_true(
+            bool(asset.get("https_only")) is expected["https_only"],
+            f"app-services HTTPS-only posture mismatch for '{expected['name']}'",
+        )
+        assert_true(
+            asset.get("public_network_access") == expected["public_network_access"],
+            f"app-services public network access mismatch for '{expected['name']}'",
+        )
+        assert_true(
+            asset.get("workload_identity_type") == expected["workload_identity_type"],
+            f"app-services workload identity type mismatch for '{expected['name']}'",
+        )
+    checks.append("app-services surfaced the intended App Service hostname, identity, and public-network posture proof")
+
+    functions = outputs["functions"]
+    expected_function = phase3_manifest["functions"]["orders"]
+    function_app = find_function_app(functions, expected_function["name"])
+    assert_true(
+        function_app.get("default_hostname") == expected_function["default_hostname"],
+        "functions default hostname mismatch",
+    )
+    assert_true(
+        function_app.get("key_vault_reference_count") == expected_function["key_vault_reference_count"],
+        "functions Key Vault reference count mismatch",
+    )
+    assert_true(
+        function_app.get("public_network_access") == expected_function["public_network_access"],
+        "functions public network access mismatch",
+    )
+    assert_true(
+        function_app.get("workload_identity_type") == expected_function["workload_identity_type"],
+        "functions workload identity type mismatch",
+    )
+    assert_true(
+        function_app.get("azure_webjobs_storage_value_type") == "plain-text",
+        "functions output lost the AzureWebJobsStorage plain-text deployment signal",
+    )
+    checks.append("functions surfaced the intended Function App hostname, Key Vault reference, and identity proof")
+
+    api_mgmt = outputs["api-mgmt"]
+    expected_api_mgmt = phase3_manifest["api_mgmt"]["edge"]
+    api_mgmt_service = find_api_management_service(api_mgmt, expected_api_mgmt["name"])
+    assert_true(
+        api_mgmt_service.get("public_network_access") == expected_api_mgmt["public_network_access"],
+        "api-mgmt public network access mismatch",
+    )
+    assert_true(
+        api_mgmt_service.get("workload_identity_type") == expected_api_mgmt["workload_identity_type"],
+        "api-mgmt workload identity type mismatch",
+    )
+    assert_true(
+        api_mgmt_service.get("api_count", 0) >= expected_api_mgmt["api_count"],
+        "api-mgmt did not surface the intended API inventory count",
+    )
+    assert_true(
+        api_mgmt_service.get("backend_count", 0) >= expected_api_mgmt["backend_count"],
+        "api-mgmt did not surface the intended backend inventory count",
+    )
+    assert_true(
+        api_mgmt_service.get("named_value_count", 0) >= expected_api_mgmt["named_value_count"],
+        "api-mgmt did not surface the intended named value inventory count",
+    )
+    assert_true(
+        any(
+            str(hostname).endswith(expected_api_mgmt["gateway_hostname_suffix"])
+            for hostname in api_mgmt_service.get("gateway_hostnames", [])
+        ),
+        "api-mgmt output missing the default Azure gateway hostname",
+    )
+    checks.append("api-mgmt surfaced gateway inventory, identity context, and public network posture from management metadata")
+
+    aks = outputs["aks"]
+    expected_aks = phase3_manifest["aks"]["ops"]
+    aks_cluster = find_aks_cluster(aks, expected_aks["name"])
+    assert_true(
+        bool(aks_cluster.get("private_cluster_enabled")) is expected_aks["private_cluster_enabled"],
+        "aks private cluster posture mismatch",
+    )
+    assert_true(
+        aks_cluster.get("cluster_identity_type") == expected_aks["cluster_identity_type"],
+        "aks cluster identity type mismatch",
+    )
+    assert_true(
+        bool(aks_cluster.get("fqdn")),
+        "aks output did not expose a control-plane FQDN for the public cluster",
+    )
+    assert_true(
+        aks_cluster.get("agent_pool_count", 0) >= 1,
+        "aks output did not expose an agent pool count",
+    )
+    checks.append("aks surfaced the public control-plane endpoint and cluster identity proof without requiring deeper cluster access")
+
+    acr = outputs["acr"]
+    expected_registry = phase3_manifest["acr"]["public"]
+    registry = find_registry(acr, expected_registry["name"])
+    assert_true(
+        registry.get("login_server") == expected_registry["login_server"],
+        "acr login server mismatch",
+    )
+    assert_true(
+        registry.get("public_network_access") == expected_registry["public_network_access"],
+        "acr public network access mismatch",
+    )
+    assert_true(
+        bool(registry.get("admin_user_enabled")) is expected_registry["admin_user_enabled"],
+        "acr admin user posture mismatch",
+    )
+    assert_true(
+        registry.get("workload_identity_type") == expected_registry["workload_identity_type"],
+        "acr workload identity type mismatch",
+    )
+    checks.append("acr surfaced the intended registry login-server, identity, and public auth posture proof")
+
+    databases = outputs["databases"]
+    expected_database = phase3_manifest["databases"]["primary"]
+    database_server = find_database_server(databases, expected_database["name"])
+    assert_true(
+        database_server.get("engine") == expected_database["engine"],
+        "databases engine mismatch",
+    )
+    assert_true(
+        database_server.get("fully_qualified_domain_name") == expected_database["fully_qualified_domain_name"],
+        "databases FQDN mismatch",
+    )
+    assert_true(
+        database_server.get("public_network_access") == expected_database["public_network_access"],
+        "databases public network access mismatch",
+    )
+    assert_true(
+        set(expected_database["user_database_names"]).issubset(
+            set(database_server.get("user_database_names", []))
+        ),
+        "databases output missing one or more expected user database names",
+    )
+    assert_true(
+        database_server.get("database_count", 0) >= len(expected_database["user_database_names"]),
+        "databases output reported fewer visible user databases than expected",
+    )
+    checks.append("databases surfaced the intended Azure SQL server endpoint and visible user-database inventory")
+
+    dns = outputs["dns"]
+    expected_public_zone = phase3_manifest["dns"]["public_zone"]
+    public_zone = find_dns_zone(dns, expected_public_zone["name"])
+    assert_true(
+        public_zone.get("zone_kind") == expected_public_zone["zone_kind"],
+        "dns public zone kind mismatch",
+    )
+    assert_true(
+        len(public_zone.get("name_servers", [])) == expected_public_zone["expected_name_server_count"],
+        "dns public zone name server count mismatch",
+    )
+    assert_true(
+        public_zone.get("record_set_count", 0) >= expected_public_zone["minimum_record_set_count"],
+        "dns public zone record_set_count was lower than expected",
+    )
+    expected_private_zone = phase3_manifest["dns"]["private_zone"]
+    private_zone = find_dns_zone(dns, expected_private_zone["name"])
+    assert_true(
+        private_zone.get("zone_kind") == expected_private_zone["zone_kind"],
+        "dns private zone kind mismatch",
+    )
+    assert_true(
+        private_zone.get("linked_virtual_network_count") == expected_private_zone["linked_virtual_network_count"],
+        "dns private zone linked virtual network count mismatch",
+    )
+    assert_true(
+        private_zone.get("registration_virtual_network_count") == expected_private_zone["registration_virtual_network_count"],
+        "dns private zone registration-enabled link count mismatch",
+    )
+    assert_true(
+        private_zone.get("record_set_count", 0) >= expected_private_zone["minimum_record_set_count"],
+        "dns private zone record_set_count was lower than expected",
+    )
+    checks.append("dns stayed within the DNS v1 boundary: zone inventory, delegation counts, and VNet-link counts only")
+
     keyvault = outputs["keyvault"]
     for label, expected in phase2_manifest["key_vaults"].items():
         vault = find_key_vault(keyvault, expected["name"])
@@ -835,7 +1287,9 @@ def validate_outputs(
                     f"{section} run-summary missing {label} artifact for {command}",
                 )
         assert_true(run_summary_path.exists(), f"{section} run-summary.json path is missing on disk")
-    checks.append("all-checks emitted complete artifact sets for identity, config, secrets, and resource sections")
+    checks.append(
+        "all-checks emitted complete artifact sets for identity, network, compute, config, secrets, and resource sections"
+    )
 
     return checks, mismatches, follow_ups
 
@@ -926,7 +1380,9 @@ def main() -> int:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = read_manifest(lab_dir)
-    all_checks_sections = list(manifest["all_checks_sections"].keys())
+    all_checks_sections = ordered_all_checks_sections(
+        list(manifest["all_checks_sections"].keys())
+    )
     outputs, loot_paths, run_summaries, run_summary_paths = run_azurefox(
         azurefox_dir=azurefox_dir,
         python_bin=args.python,

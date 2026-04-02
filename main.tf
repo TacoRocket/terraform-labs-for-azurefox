@@ -24,6 +24,16 @@ locals {
   phase2_empty_app_name          = "app-empty-mi-${substr(local.unique_suffix, 0, 6)}"
   phase2_plan_name               = "asp-phase2-linux"
   phase2_proof_container_name    = "phase2proof"
+  phase3_apim_name               = "apim-${substr(local.sanitized_prefix, 0, 8)}-${substr(local.unique_suffix, 0, 6)}"
+  phase3_aks_name                = "aks-ops-${substr(local.unique_suffix, 0, 6)}"
+  phase3_aks_dns_prefix          = "aks${substr(local.sanitized_prefix, 0, 8)}${substr(local.unique_suffix, 0, 4)}"
+  phase3_acr_name                = substr("acr${local.sanitized_prefix}${local.unique_suffix}", 0, 50)
+  phase3_sql_server_name         = "sql-${substr(local.sanitized_prefix, 0, 8)}-${substr(local.unique_suffix, 0, 6)}"
+  phase3_sql_database_name       = "appdb"
+  phase3_sql_admin_login         = "afsqladmin"
+  phase3_sql_admin_password      = "AzFox!${substr(local.unique_suffix, 0, 4)}${substr(local.unique_suffix, 4, 4)}"
+  phase3_public_dns_zone_name    = "af-${substr(local.unique_suffix, 0, 6)}.example.net"
+  phase3_private_dns_zone_name   = "azurefox-${substr(local.unique_suffix, 0, 6)}.internal"
   phase2_sub_template_hash       = substr(filemd5("${path.module}/scripts/arm-templates/sub-foundation.json"), 0, 8)
   phase2_rg_parameters_hash      = substr(filemd5("${path.module}/scripts/arm-templates/kv-secrets.parameters.json"), 0, 8)
   phase2_sub_template_blob_name  = "templates/sub-foundation-${local.phase2_sub_template_hash}.json"
@@ -107,6 +117,20 @@ resource "azurerm_network_security_group" "workload" {
 resource "azurerm_subnet_network_security_group_association" "workload" {
   subnet_id                 = azurerm_subnet.workload.id
   network_security_group_id = azurerm_network_security_group.workload.id
+}
+
+resource "azurerm_network_security_rule" "workload_allow_ssh_internet" {
+  name                        = "allow-ssh-internet"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "22"
+  source_address_prefix       = "Internet"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.network.name
+  network_security_group_name = azurerm_network_security_group.workload.name
 }
 
 resource "azurerm_public_ip" "vm_web" {
@@ -558,19 +582,23 @@ resource "azurerm_storage_account" "function" {
 }
 
 resource "azurerm_linux_web_app" "phase2_public" {
-  name                = local.phase2_app_name
-  resource_group_name = azurerm_resource_group.workload.name
-  location            = azurerm_resource_group.workload.location
-  service_plan_id     = azurerm_service_plan.phase2_linux.id
-  https_only          = true
-  tags                = local.tags
+  name                          = local.phase2_app_name
+  resource_group_name           = azurerm_resource_group.workload.name
+  location                      = azurerm_resource_group.workload.location
+  service_plan_id               = azurerm_service_plan.phase2_linux.id
+  public_network_access_enabled = true
+  client_certificate_enabled    = false
+  https_only                    = true
+  tags                          = local.tags
 
   identity {
     type = "SystemAssigned"
   }
 
   site_config {
-    always_on = false
+    always_on           = false
+    ftps_state          = "Disabled"
+    minimum_tls_version = "1.2"
 
     application_stack {
       python_version = "3.11"
@@ -584,19 +612,23 @@ resource "azurerm_linux_web_app" "phase2_public" {
 }
 
 resource "azurerm_linux_web_app" "phase2_empty" {
-  name                = local.phase2_empty_app_name
-  resource_group_name = azurerm_resource_group.workload.name
-  location            = azurerm_resource_group.workload.location
-  service_plan_id     = azurerm_service_plan.phase2_linux.id
-  https_only          = true
-  tags                = local.tags
+  name                          = local.phase2_empty_app_name
+  resource_group_name           = azurerm_resource_group.workload.name
+  location                      = azurerm_resource_group.workload.location
+  service_plan_id               = azurerm_service_plan.phase2_linux.id
+  public_network_access_enabled = true
+  client_certificate_enabled    = false
+  https_only                    = true
+  tags                          = local.tags
 
   identity {
     type = "SystemAssigned"
   }
 
   site_config {
-    always_on = false
+    always_on           = false
+    ftps_state          = "Disabled"
+    minimum_tls_version = "1.2"
 
     application_stack {
       python_version = "3.11"
@@ -615,6 +647,8 @@ resource "azurerm_linux_function_app" "phase2_orders" {
   storage_account_access_key      = azurerm_storage_account.function.primary_access_key
   key_vault_reference_identity_id = azurerm_user_assigned_identity.ua_app.id
   functions_extension_version     = "~4"
+  public_network_access_enabled   = true
+  client_certificate_enabled      = false
   https_only                      = true
   tags                            = local.tags
 
@@ -624,6 +658,10 @@ resource "azurerm_linux_function_app" "phase2_orders" {
   }
 
   site_config {
+    always_on           = true
+    ftps_state          = "Disabled"
+    minimum_tls_version = "1.2"
+
     application_stack {
       python_version = "3.11"
     }
@@ -632,6 +670,154 @@ resource "azurerm_linux_function_app" "phase2_orders" {
   app_settings = {
     PAYMENT_API_KEY = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.open.name};SecretName=payment-api-key)"
   }
+}
+
+resource "azurerm_api_management" "phase3" {
+  name                          = local.phase3_apim_name
+  location                      = azurerm_resource_group.ops.location
+  resource_group_name           = azurerm_resource_group.ops.name
+  publisher_email               = "azurefox-lab@example.com"
+  publisher_name                = "AzureFox Lab"
+  public_network_access_enabled = true
+  sku_name                      = "Consumption_0"
+  tags                          = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_api_management_named_value" "phase3_backend_base" {
+  name                = "backend-base-url"
+  api_management_name = azurerm_api_management.phase3.name
+  resource_group_name = azurerm_resource_group.ops.name
+  display_name        = "backend-base-url"
+  value               = "https://${azurerm_linux_web_app.phase2_public.default_hostname}"
+}
+
+resource "azurerm_api_management_backend" "phase3_public_api" {
+  name                = "public-api-backend"
+  api_management_name = azurerm_api_management.phase3.name
+  resource_group_name = azurerm_resource_group.ops.name
+  protocol            = "http"
+  url                 = "https://${azurerm_linux_web_app.phase2_public.default_hostname}"
+}
+
+resource "azurerm_api_management_api" "phase3_public_api" {
+  name                  = "public-api"
+  resource_group_name   = azurerm_resource_group.ops.name
+  api_management_name   = azurerm_api_management.phase3.name
+  revision              = "1"
+  display_name          = "Public API"
+  path                  = "public-api"
+  protocols             = ["https"]
+  service_url           = "https://${azurerm_linux_web_app.phase2_public.default_hostname}"
+  subscription_required = false
+}
+
+resource "azurerm_kubernetes_cluster" "phase3" {
+  name                              = local.phase3_aks_name
+  location                          = azurerm_resource_group.workload.location
+  resource_group_name               = azurerm_resource_group.workload.name
+  dns_prefix                        = local.phase3_aks_dns_prefix
+  role_based_access_control_enabled = true
+  sku_tier                          = "Free"
+  tags                              = local.tags
+
+  default_node_pool {
+    name       = "system"
+    node_count = 1
+    vm_size    = var.vm_size
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  linux_profile {
+    admin_username = var.vm_admin_username
+
+    ssh_key {
+      key_data = trimspace(var.ssh_public_key)
+    }
+  }
+
+  network_profile {
+    network_plugin    = "kubenet"
+    load_balancer_sku = "standard"
+  }
+}
+
+resource "azurerm_container_registry" "phase3" {
+  name                          = local.phase3_acr_name
+  resource_group_name           = azurerm_resource_group.ops.name
+  location                      = azurerm_resource_group.ops.location
+  sku                           = "Standard"
+  admin_enabled                 = true
+  public_network_access_enabled = true
+  tags                          = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_mssql_server" "phase3" {
+  name                          = local.phase3_sql_server_name
+  resource_group_name           = azurerm_resource_group.data.name
+  location                      = azurerm_resource_group.data.location
+  version                       = "12.0"
+  administrator_login           = local.phase3_sql_admin_login
+  administrator_login_password  = local.phase3_sql_admin_password
+  minimum_tls_version           = "1.2"
+  public_network_access_enabled = true
+  tags                          = local.tags
+}
+
+resource "azurerm_mssql_database" "phase3" {
+  name           = local.phase3_sql_database_name
+  server_id      = azurerm_mssql_server.phase3.id
+  sku_name       = "Basic"
+  max_size_gb    = 2
+  zone_redundant = false
+  tags           = local.tags
+}
+
+resource "azurerm_dns_zone" "phase3_public" {
+  name                = local.phase3_public_dns_zone_name
+  resource_group_name = azurerm_resource_group.network.name
+  tags                = local.tags
+}
+
+resource "azurerm_dns_a_record" "phase3_public_vm" {
+  name                = "vm-web"
+  zone_name           = azurerm_dns_zone.phase3_public.name
+  resource_group_name = azurerm_resource_group.network.name
+  ttl                 = 300
+  records             = [azurerm_public_ip.vm_web.ip_address]
+}
+
+resource "azurerm_private_dns_zone" "phase3_internal" {
+  name                = local.phase3_private_dns_zone_name
+  resource_group_name = azurerm_resource_group.network.name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "phase3_internal" {
+  name                  = "internal-zone-link"
+  resource_group_name   = azurerm_resource_group.network.name
+  private_dns_zone_name = azurerm_private_dns_zone.phase3_internal.name
+  virtual_network_id    = azurerm_virtual_network.lab.id
+  registration_enabled  = true
+  tags                  = local.tags
+}
+
+resource "azurerm_private_dns_a_record" "phase3_internal_api" {
+  name                = "api"
+  zone_name           = azurerm_private_dns_zone.phase3_internal.name
+  resource_group_name = azurerm_resource_group.network.name
+  ttl                 = 300
+  records             = ["10.42.1.10"]
 }
 
 locals {
