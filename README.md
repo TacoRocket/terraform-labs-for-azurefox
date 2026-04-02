@@ -4,6 +4,10 @@ This repo contains an OpenTofu lab environment for demonstrating AzureFox agains
 
 The lab is intentionally small, disposable, and security-relevant. It creates a controlled Azure footprint that AzureFox can enumerate to prove the current command set works end-to-end in a live tenant.
 
+This is intentionally a more manual operator repo than AzureFox itself. The value is not turnkey
+packaging; it is a transparent, inspectable lab that lets operators deploy known conditions, run
+AzureFox against them, and learn from the resulting proof artifacts.
+
 ## What This Repo Is For
 
 - give AzureFox a real Azure target for demos and proof-of-capability runs
@@ -346,3 +350,18 @@ The practical differences to keep in mind are:
 - Some new or recently upgraded Azure subscriptions return `NotAvailableForSubscription` for small VM families even across multiple regions.
 - The current repo defaults use `Standard_D2s_v3` in `centralus` because that combination was verified as deployable for this subscription during bring-up.
 - For public release, revisit quotas/SKU access and move back to smaller defaults when possible.
+
+## Release Prep
+
+This repo now keeps release-prep guidance in:
+
+- `VERSION`
+- `CHANGELOG.md`
+- `docs/release-process.md`
+- `docs/release-readiness-checklist.md`
+
+Use those docs to make release decisions repeatable. For this lab, release readiness is less about
+package publishing and more about deployability, validation truth, artifact quality, and clear quota
+or cost guidance. Operators should expect a hands-on workflow here: the repo is meant to be
+insightful and testable, not abstracted into a one-click experience. Release tags in this repo
+should mirror AzureFox's exact version number.
