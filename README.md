@@ -232,13 +232,9 @@ By default the validator:
 
 - reads `tofu output -json validation_manifest`
 - executes AzureFox from `--azurefox-dir`
-- runs the current AzureFox command set covered by this lab
-- runs `all-checks --section identity`
-- runs `all-checks --section network`
-- runs `all-checks --section compute`
-- runs `all-checks --section config`
-- runs `all-checks --section secrets`
-- runs `all-checks --section resource`
+- runs in `--mode full`, which executes the current standalone AzureFox command set plus:
+  `all-checks --section config`, `secrets`, `resource`, `network`, `compute`, and `identity`
+- prints progress lines before and after each AzureFox step, including elapsed time and target artifact directories
 - stores proof artifacts under `proof-artifacts/latest`
 
 Optional flags:
@@ -248,6 +244,21 @@ python3 scripts/validate_azurefox_lab.py \
   --azurefox-dir /path/to/azurefox \
   --artifacts-dir ./proof-artifacts/run-01
 ```
+
+Useful scoped reruns:
+
+```bash
+python3 scripts/validate_azurefox_lab.py --mode commands-only
+python3 scripts/validate_azurefox_lab.py --mode all-checks-only
+python3 scripts/validate_azurefox_lab.py --mode full
+```
+
+Runtime note:
+
+- `all-checks` is materially slower than a typical single-command AzureFox run
+- use `--mode commands-only` when you want payload truth for the individual commands without paying for the orchestration pass
+- use `--mode all-checks-only` when you are specifically validating the section wrapper and artifact emission path
+- keep `--mode full` for intentional checkpoint-style end-to-end validation, since it repeats some collection surfaces by design
 
 Artifacts include:
 
