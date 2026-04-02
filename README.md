@@ -141,6 +141,12 @@ This lab intentionally creates risky posture in Azure:
 
 Use a throwaway subscription dedicated to testing. Do not deploy this into a shared or production-adjacent subscription.
 
+By using this repo, you acknowledge that it can deploy an intentionally insecure Azure environment.
+You are solely responsible for where and how you run it, and for any cost, exposure, compromise,
+data loss, service impact, or other consequences that result from deploying or operating this lab.
+The authors and maintainers of this repo are not responsible or liable for any outcome caused by
+spinning up, modifying, or using this insecure environment.
+
 The repo does not intentionally change tenant-wide Entra auth controls in this phase. Keep it that way unless the team explicitly decides the added blast radius and rollback burden are worth it.
 
 ## Prerequisites
