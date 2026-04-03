@@ -170,6 +170,7 @@ team explicitly decides the added blast radius and rollback burden are worth it.
 - Access to a disposable Azure subscription
 - Python 3.11+ for the AzureFox CLI
 - An AzureFox checkout available locally
+- On Windows 10/11, the built-in PowerShell and OpenSSH client are the recommended shell/tooling path
 
 Recommended local checks:
 
@@ -194,12 +195,19 @@ OpenTofu will also use the Azure CLI session unless you override authentication 
 stamping. Terraform passes the needed values to the helper script automatically, so you do not need
 to set extra environment variables by hand for that step.
 
+The examples below use Bash unless noted. PowerShell equivalents are shown where the command syntax
+differs.
+
 ## Configure
 
 Copy the example variable file and replace the SSH public key:
 
 ```bash
 cp tofu.tfvars.example terraform.tfvars
+```
+
+```powershell
+Copy-Item tofu.tfvars.example terraform.tfvars
 ```
 
 Edit `terraform.tfvars` and set:
@@ -225,6 +233,11 @@ Generate a compatible keypair:
 ```bash
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/azurefox_lab_rsa -C "azurefox-lab" -N ""
 cat ~/.ssh/azurefox_lab_rsa.pub
+```
+
+```powershell
+ssh-keygen -t rsa -b 4096 -f $HOME/.ssh/azurefox_lab_rsa -C "azurefox-lab" -N ""
+Get-Content $HOME/.ssh/azurefox_lab_rsa.pub
 ```
 
 ## Deploy
