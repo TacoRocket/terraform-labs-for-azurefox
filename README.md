@@ -1,12 +1,16 @@
 # AzureFox OpenTofu Proof Lab
 
-This repo contains an OpenTofu lab environment for demonstrating AzureFox against a real Azure subscription.
+<p align="center">
+  <img src="docs/branding/opentofuazurefox.png" alt="AzureFox OpenTofu Proof Lab logo" width="320" />
+</p>
 
-The lab is intentionally small, disposable, and security-relevant. It creates a controlled Azure footprint that AzureFox can enumerate to prove the current command set works end-to-end in a live tenant.
+This repo contains the OpenTofu lab environment for AzureFox.
 
-This is intentionally a more manual operator repo than AzureFox itself. The value is not turnkey
-packaging; it is a transparent, inspectable lab that lets operators deploy known conditions, run
-AzureFox against them, and learn from the resulting proof artifacts.
+It creates a small Azure footprint that you can deploy in a disposable subscription, run AzureFox
+against, and use for demos, validation runs, and proof-of-capability testing.
+
+Unlike the main AzureFox repo, this one is meant to stay hands-on and easy to inspect. The goal is
+to make the lab behavior obvious rather than hiding it behind extra packaging.
 
 ## Companion Repo
 
@@ -14,19 +18,19 @@ This lab belongs with the main AzureFox project:
 
 - Main repo: [TacoRocket/AzureFox](https://github.com/TacoRocket/AzureFox)
 
-Use this repo to deploy and validate the lab environment, and use the main AzureFox repo for the
-CLI, command implementation, and release source of truth.
+Use this repo to deploy and validate the lab environment. Use the main AzureFox repo for the CLI,
+command implementation, and release source of truth.
 
 ## What This Repo Is For
 
-- give AzureFox a real Azure target for demos and proof-of-capability runs
+- give AzureFox a real Azure target for demos and validation runs
 - exercise the current AzureFox command set against live infrastructure
 - provide a repeatable OpenTofu deployment and teardown flow
 - generate validation artifacts that show AzureFox findings against known lab conditions
 
 ## AzureFox Coverage
 
-The lab is designed to trigger or validate the current AzureFox checkpoint:
+The lab is built to exercise these AzureFox commands and sections:
 
 - `whoami`
 - `inventory`
@@ -62,7 +66,8 @@ The lab is designed to trigger or validate the current AzureFox checkpoint:
 - `all-checks --section secrets`
 - `all-checks --section resource`
 
-The project is OpenTofu-first, but the HCL stays Terraform-familiar on purpose. That keeps licensing concerns lower while preserving a familiar structure for Terraform users.
+The project is OpenTofu-first, but the HCL stays close to standard Terraform style so it feels
+familiar to most operators.
 
 ## Lab Shape
 
@@ -75,10 +80,10 @@ The project is OpenTofu-first, but the HCL stays Terraform-familiar on purpose. 
   `af-roletrust-api` and `af-roletrust-client`
 - One federated identity credential on `af-roletrust-api`
 - One internal app-role assignment from `af-roletrust-client` to `af-roletrust-api`
-- Low-impact `Reader` RBAC assignments that make the proof service principals visible to AzureFox
+- Low-impact `Reader` RBAC assignments that make the service principals visible to AzureFox
 - One storage account that allows public blob access and uses firewall default action `Allow`
 - One storage account with firewall default action `Deny` plus a private endpoint
-- One public blob container that hosts linked ARM template and parameter proof artifacts
+- One public blob container that hosts linked ARM template and parameter artifacts
 - Four Key Vaults that cover:
   public network open
   public network enabled with firewall deny
@@ -86,20 +91,20 @@ The project is OpenTofu-first, but the HCL stays Terraform-familiar on purpose. 
   private endpoint only
 - One Linux App Service with a system-assigned identity and a plain-text sensitive setting
 - One Linux Function App with system-assigned plus user-assigned identity and a Key Vault-backed app setting
-- One Linux App Service with attached identity and intentionally empty app settings
+- One Linux App Service with attached identity and empty app settings
 - One subnet-level NSG allow rule on the workload subnet so `network-ports` has explicit public-ingress evidence for the public VM
 - One API Management service with a system-assigned identity plus one API, one backend, and one named value
 - One AKS cluster with a public control-plane endpoint and system-assigned identity
 - One Azure Container Registry with public network access and admin user enabled
 - One Azure SQL server with one user database
 - One public DNS zone plus one private DNS zone with a registration-enabled VNet link
-- Three deployment-history proof objects:
+- Three deployment-history objects:
   one succeeded subscription deployment with linked template URI
   one succeeded resource-group deployment with linked parameters URI
   one failed resource-group deployment with no outputs
 - One subscription-scope `Owner` role assignment for the managed identity
 
-That combination is enough for AzureFox to surface:
+With this setup, AzureFox should surface:
 
 - subscription context from `whoami`
 - resource counts and resource types from `inventory`
@@ -116,7 +121,7 @@ That combination is enough for AzureFox to surface:
 - Key Vault public-network, private-endpoint, and purge-protection posture from `keyvault`
 - public storage and open firewall findings from `storage`
 - a public VM with an attached identity from `vms`
-- NIC attachment and public-IP reference proof from `nics`
+- NIC attachment and public-IP references from `nics`
 - public IP and Azure-managed hostname visibility from `endpoints`
 - NIC-backed public ingress evidence from `network-ports`
 - a joined compute plus web workload census from `workloads`
@@ -134,29 +139,29 @@ That combination is enough for AzureFox to surface:
 - secrets checkpoint orchestration artifacts from `all-checks --section secrets`
 - resource checkpoint orchestration artifacts from `all-checks --section resource`
 
-`auth-policies` is intentionally handled differently in this repo for now:
+`auth-policies` is handled a little differently in this repo:
 
-- the validator checks that AzureFox reports readable tenant auth metadata truthfully
+- the validator checks that AzureFox reports readable tenant auth metadata accurately
 - the validator records permission-denied or partial-read conditions explicitly
 - the lab does not mutate tenant-wide Entra auth policy state during this phase
 
 ## Warning
 
-This lab intentionally creates risky posture in Azure:
+This lab creates risky posture in Azure on purpose:
 
 - public IP exposure
 - public blob access
 - subscription-scope `Owner` RBAC
 
-Use a throwaway subscription dedicated to testing. Do not deploy this into a shared or production-adjacent subscription.
+Use a throwaway subscription dedicated to testing. Do not deploy this into a shared or
+production-adjacent subscription.
 
-By using this repo, you acknowledge that it can deploy an intentionally insecure Azure environment.
-You are solely responsible for where and how you run it, and for any cost, exposure, compromise,
-data loss, service impact, or other consequences that result from deploying or operating this lab.
-The authors and maintainers of this repo are not responsible or liable for any outcome caused by
-spinning up, modifying, or using this insecure environment.
+This repo can deploy an insecure Azure environment. You are responsible for where and how you run
+it, and for any cost, exposure, compromise, data loss, or service impact that follows from using
+the lab.
 
-The repo does not intentionally change tenant-wide Entra auth controls in this phase. Keep it that way unless the team explicitly decides the added blast radius and rollback burden are worth it.
+The repo does not change tenant-wide Entra auth controls in this phase. Keep it that way unless the
+team explicitly decides the added blast radius and rollback burden are worth it.
 
 ## Prerequisites
 
@@ -226,10 +231,10 @@ tofu plan
 tofu apply
 ```
 
-`tofu apply` now also stamps the Phase 2 ARM deployment-history proof objects through a small
-Azure CLI helper after the linked template artifacts exist. That helper is intentionally narrow:
-it creates one succeeded subscription deployment, one succeeded resource-group deployment, and one
-failed resource-group deployment so AzureFox can validate deployment-history coverage live.
+`tofu apply` also stamps the Phase 2 ARM deployment-history objects through a small Azure CLI
+helper after the linked template artifacts exist. It creates one succeeded subscription deployment,
+one succeeded resource-group deployment, and one failed resource-group deployment so AzureFox can
+validate deployment-history coverage in a live tenant.
 
 Useful outputs after apply:
 
@@ -272,12 +277,12 @@ python3 scripts/validate_azurefox_lab.py --mode all-checks-only
 python3 scripts/validate_azurefox_lab.py --mode full
 ```
 
-Runtime note:
+Runtime notes:
 
-- `all-checks` is materially slower than a typical single-command AzureFox run
-- use `--mode commands-only` when you want payload truth for the individual commands without paying for the orchestration pass
+- `all-checks` is slower than a typical single-command AzureFox run
+- use `--mode commands-only` when you want the individual command outputs without the orchestration pass
 - use `--mode all-checks-only` when you are specifically validating the section wrapper and artifact emission path
-- keep `--mode full` for intentional checkpoint-style end-to-end validation, since it repeats some collection surfaces by design
+- use `--mode full` for deliberate end-to-end validation, knowing that it repeats some collection surfaces by design
 
 Artifacts include:
 
@@ -290,11 +295,12 @@ Artifacts include:
 - `identity-mismatch-report.md`
 - `azurefox-follow-up-items.md`
 
-## Evidence Boundary
+## Evidence Boundaries
 
-The lab is here to validate AzureFox output, not to excuse weak wording or guessed findings.
+This lab is here to validate AzureFox output against real Azure objects. It is not a substitute for
+clear wording or evidence-based findings in the tool itself.
 
-What AzureFox can prove directly from read-only control-plane and Graph data:
+What AzureFox can verify directly from read-only control-plane and Graph data:
 
 - that an app registration, service principal, owner edge, federated credential, app-role assignment, or auth-policy row exists in the readable APIs
 - that a resource or identity is visible and how AzureFox summarized it
@@ -308,16 +314,16 @@ What AzureFox can prove directly from read-only control-plane and Graph data:
 - that API Management, AKS, ACR, and Azure SQL service inventory stays evidence-based when only management metadata is visible
 - that DNS v1 proves zone inventory, visible record-set totals, delegation, and VNet-link counts only
 
-What only the lab can confirm once infrastructure exists and behavior is exercised:
+What only the lab can confirm once infrastructure exists and the validator has been run:
 
 - whether RBAC visibility is sufficient for AzureFox to pull the intended service principals into `role-trusts`
-- whether the proof trust edges survive deployment and show up as expected in a live tenant
+- whether the trust edges survive deployment and show up as expected in a live tenant
 - whether AzureFox wording drifts beyond what the metadata actually proves
 - whether `tokens-credentials` still includes an identity-bearing web workload when no env-var rows exist for that workload
 - whether the composed `resource-trusts` path stays aligned with the storage plus Key Vault live objects
 - whether the Key Vault purge-protection finding stays out of `resource-trusts`
 
-What this phase does not attempt to prove:
+What this phase does not test:
 
 - live federated token exchange from an external issuer
 - delegated OAuth consent paths exercised through real sign-in flows
@@ -356,7 +362,7 @@ The practical differences to keep in mind are:
 - Tooling and CI jobs need to invoke `tofu`, not `terraform`.
 - The lock file name is still `.terraform.lock.hcl`, which is familiar but easy to overlook during reviews.
 - Local state still uses `terraform.tfstate`, so mixed-tool usage can confuse contributors if the workflow is not documented.
-- This v1 lab intentionally avoids OpenTofu-only language features to reduce surprise for Terraform users.
+- This v1 lab avoids OpenTofu-only language features to reduce surprise for Terraform users.
 - If the lab later adopts remote state, re-check backend behavior and team workflow before standardizing it.
 
 ## Cost And Capacity Notes
@@ -368,18 +374,16 @@ The practical differences to keep in mind are:
 
 ## Release Prep
 
-This repo now keeps release-prep guidance in:
+Release-prep guidance lives in:
 
 - `VERSION`
 - `CHANGELOG.md`
 - `docs/release-process.md`
 - `docs/release-readiness-checklist.md`
 
-Use those docs to make release decisions repeatable. For this lab, release readiness is less about
-package publishing and more about deployability, validation truth, artifact quality, and clear quota
-or cost guidance. Operators should expect a hands-on workflow here: the repo is meant to be
-insightful and testable, not abstracted into a one-click experience. Release tags in this repo
-should mirror AzureFox's exact version number.
+Use those docs to keep release decisions repeatable. In this repo, release readiness is mostly about
+deployability, validation quality, artifact quality, and clear quota or cost guidance. Release tags
+here should mirror AzureFox's exact version number.
 
 ## License
 
