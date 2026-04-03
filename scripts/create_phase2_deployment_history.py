@@ -3,25 +3,71 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
+
+
+def env_default(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create the Phase 2 ARM deployment-history proof objects for the AzureFox lab."
     )
-    parser.add_argument("--subscription-id", required=True)
-    parser.add_argument("--location", required=True)
-    parser.add_argument("--subscription-deployment-name", required=True)
-    parser.add_argument("--subscription-template-uri", required=True)
-    parser.add_argument("--resource-group", required=True)
-    parser.add_argument("--resource-group-deployment-name", required=True)
-    parser.add_argument("--resource-group-parameters-uri", required=True)
-    parser.add_argument("--failed-resource-group", required=True)
-    parser.add_argument("--failed-deployment-name", required=True)
-    return parser.parse_args()
+    parser.add_argument("--subscription-id", default=env_default("AF_SUBSCRIPTION_ID"))
+    parser.add_argument("--location", default=env_default("AF_LOCATION"))
+    parser.add_argument(
+        "--subscription-deployment-name",
+        default=env_default("AF_SUBSCRIPTION_DEPLOYMENT_NAME"),
+    )
+    parser.add_argument(
+        "--subscription-template-uri",
+        default=env_default("AF_SUBSCRIPTION_TEMPLATE_URI"),
+    )
+    parser.add_argument("--resource-group", default=env_default("AF_RESOURCE_GROUP"))
+    parser.add_argument(
+        "--resource-group-deployment-name",
+        default=env_default("AF_RESOURCE_GROUP_DEPLOYMENT_NAME"),
+    )
+    parser.add_argument(
+        "--resource-group-parameters-uri",
+        default=env_default("AF_RESOURCE_GROUP_PARAMETERS_URI"),
+    )
+    parser.add_argument(
+        "--failed-resource-group",
+        default=env_default("AF_FAILED_RESOURCE_GROUP"),
+    )
+    parser.add_argument(
+        "--failed-deployment-name",
+        default=env_default("AF_FAILED_DEPLOYMENT_NAME"),
+    )
+
+    args = parser.parse_args()
+    missing = [
+        name
+        for name, value in {
+            "subscription-id": args.subscription_id,
+            "location": args.location,
+            "subscription-deployment-name": args.subscription_deployment_name,
+            "subscription-template-uri": args.subscription_template_uri,
+            "resource-group": args.resource_group,
+            "resource-group-deployment-name": args.resource_group_deployment_name,
+            "resource-group-parameters-uri": args.resource_group_parameters_uri,
+            "failed-resource-group": args.failed_resource_group,
+            "failed-deployment-name": args.failed_deployment_name,
+        }.items()
+        if not value
+    ]
+    if missing:
+        parser.error(f"Missing required arguments or environment variables: {', '.join(missing)}")
+    return args
 
 
 def run(cmd: list[str], *, expect_success: bool = True) -> subprocess.CompletedProcess[str]:
