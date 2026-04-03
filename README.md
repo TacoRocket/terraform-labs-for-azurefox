@@ -190,6 +190,10 @@ az account set --subscription <subscription-id>
 
 OpenTofu will also use the Azure CLI session unless you override authentication with environment variables.
 
+`tofu apply` uses the local `tofu`, `az`, and `python3` executables during deployment history
+stamping. Terraform passes the needed values to the helper script automatically, so you do not need
+to set extra environment variables by hand for that step.
+
 ## Configure
 
 Copy the example variable file and replace the SSH public key:

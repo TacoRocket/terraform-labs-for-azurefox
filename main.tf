@@ -849,7 +849,18 @@ resource "terraform_data" "phase2_deployment_history" {
   }
 
   provisioner "local-exec" {
-    command = "python3 ${path.module}/scripts/create_phase2_deployment_history.py --subscription-id '${self.input.subscription_id}' --location '${self.input.location}' --subscription-deployment-name '${self.input.subscription_deployment_name}' --subscription-template-uri '${self.input.subscription_template_uri}' --resource-group '${self.input.resource_group}' --resource-group-deployment-name '${self.input.resource_group_deployment_name}' --resource-group-parameters-uri '${self.input.resource_group_parameters_uri}' --failed-resource-group '${self.input.failed_resource_group}' --failed-deployment-name '${self.input.failed_deployment_name}'"
+    environment = {
+      AF_FAILED_DEPLOYMENT_NAME         = self.input.failed_deployment_name
+      AF_FAILED_RESOURCE_GROUP          = self.input.failed_resource_group
+      AF_LOCATION                       = self.input.location
+      AF_RESOURCE_GROUP                 = self.input.resource_group
+      AF_RESOURCE_GROUP_DEPLOYMENT_NAME = self.input.resource_group_deployment_name
+      AF_RESOURCE_GROUP_PARAMETERS_URI  = self.input.resource_group_parameters_uri
+      AF_SUBSCRIPTION_DEPLOYMENT_NAME   = self.input.subscription_deployment_name
+      AF_SUBSCRIPTION_ID                = self.input.subscription_id
+      AF_SUBSCRIPTION_TEMPLATE_URI      = self.input.subscription_template_uri
+    }
+    command = "python3 \"${path.module}/scripts/create_phase2_deployment_history.py\""
   }
 
   depends_on = [
