@@ -8,6 +8,15 @@ This is intentionally a more manual operator repo than AzureFox itself. The valu
 packaging; it is a transparent, inspectable lab that lets operators deploy known conditions, run
 AzureFox against them, and learn from the resulting proof artifacts.
 
+## Companion Repo
+
+This lab belongs with the main AzureFox project:
+
+- Main repo: [TacoRocket/AzureFox](https://github.com/TacoRocket/AzureFox)
+
+Use this repo to deploy and validate the lab environment, and use the main AzureFox repo for the
+CLI, command implementation, and release source of truth.
+
 ## What This Repo Is For
 
 - give AzureFox a real Azure target for demos and proof-of-capability runs
@@ -371,3 +380,7 @@ package publishing and more about deployability, validation truth, artifact qual
 or cost guidance. Operators should expect a hands-on workflow here: the repo is meant to be
 insightful and testable, not abstracted into a one-click experience. Release tags in this repo
 should mirror AzureFox's exact version number.
+
+## License
+
+This repo uses the same MIT license as the main AzureFox project. See [LICENSE](LICENSE).
