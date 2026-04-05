@@ -30,7 +30,11 @@ command implementation, and release source of truth.
 
 ## AzureFox Coverage
 
-The lab is built to exercise these AzureFox commands and sections:
+The lab is built to exercise this release-gated subset of AzureFox commands and sections. AzureFox
+may have additional commands on `main` that are still discovery-only or not yet backed by
+deterministic lab proof objects.
+
+Current validator coverage:
 
 - `whoami`
 - `inventory`
@@ -59,6 +63,7 @@ The lab is built to exercise these AzureFox commands and sections:
 - `aks`
 - `acr`
 - `databases`
+- `snapshots-disks`
 - `all-checks --section identity`
 - `all-checks --section network`
 - `all-checks --section compute`
@@ -68,6 +73,19 @@ The lab is built to exercise these AzureFox commands and sections:
 
 The project is OpenTofu-first, but the HCL stays close to standard Terraform style so it feels
 familiar to most operators.
+
+Current checkpoint notes:
+
+- `docs/phase3-compute-apps-network-checkpoint.md`
+- `docs/phase4-command-discovery-checkpoint.md`
+
+Current release boundary:
+
+- this repo is now aligned to AzureFox `1.1.0` / Phase 3.5 for release-gated validation
+- Phase 4 / `1.2.0` remains discovery-first here, except for `snapshots-disks`, which is now a
+  validator-backed proof surface
+- broader PostgreSQL relational parity is still tracked as an AzureFox main-repo follow-up rather
+  than being overstated in this lab release
 
 ## Lab Shape
 
@@ -127,11 +145,12 @@ With this setup, AzureFox should surface:
 - a joined compute plus web workload census from `workloads`
 - App Service hostname, identity, and posture inventory from `app-services`
 - Function App hostname, identity, and deployment-signal inventory from `functions`
-- API Management hostname, inventory-count, and identity visibility from `api-mgmt`
-- AKS control-plane endpoint and identity visibility from `aks`
-- ACR login-server, auth posture, and identity visibility from `acr`
-- Azure SQL endpoint and visible user-database inventory from `databases`
-- DNS zone inventory, record-set totals, delegation counts, and private-link counts from `dns`
+- API Management hostname, identity, subscription, named-value, and backend-host depth from `api-mgmt`
+- AKS control-plane endpoint, agent-pool count, OIDC posture, and addon visibility from `aks`
+- ACR login-server, admin-user, webhook, replication, and policy posture from `acr`
+- Azure SQL endpoint, visible user-database inventory, and minimal TLS posture from `databases`
+- managed-disk attachment, network-access, and encryption posture from `snapshots-disks`
+- DNS zone inventory and private-endpoint-backed namespace usage from `dns`
 - identity checkpoint orchestration artifacts from `all-checks --section identity`
 - network checkpoint orchestration artifacts from `all-checks --section network`
 - compute checkpoint orchestration artifacts from `all-checks --section compute`
@@ -192,7 +211,7 @@ az account set --subscription <subscription-id>
 OpenTofu will also use the Azure CLI session unless you override authentication with environment variables.
 
 `tofu apply` uses the local `tofu`, `az`, and `python3` executables during deployment history
-stamping. Terraform passes the needed values to the helper script automatically, so you do not need
+stamping. OpenTofu passes the needed values to the helper script automatically, so you do not need
 to set extra environment variables by hand for that step.
 
 The examples below use Bash unless noted. PowerShell equivalents are shown where the command syntax
@@ -261,6 +280,13 @@ tofu output -json role_trusts_manifest
 tofu output -json validation_manifest
 ```
 
+If you change `outputs.tf` or the manifest expectations after the lab is already deployed, refresh
+the OpenTofu state before rerunning validation so `validation_manifest` matches the current branch:
+
+```bash
+tofu apply -refresh-only
+```
+
 ## Validate AzureFox Against The Lab
 
 Install the AzureFox package dependencies in your preferred environment, then run:
@@ -273,8 +299,7 @@ By default the validator:
 
 - reads `tofu output -json validation_manifest`
 - executes AzureFox from `--azurefox-dir`
-- runs in `--mode full`, which executes the current standalone AzureFox command set plus:
-  `all-checks --section config`, `secrets`, `resource`, `network`, `compute`, and `identity`
+- runs in `--mode full`, which executes the current release-gated standalone AzureFox command set
 - prints progress lines before and after each AzureFox step, including elapsed time and target artifact directories
 - stores proof artifacts under `proof-artifacts/latest`
 
@@ -292,14 +317,25 @@ Useful scoped reruns:
 python3 scripts/validate_azurefox_lab.py --mode commands-only
 python3 scripts/validate_azurefox_lab.py --mode all-checks-only
 python3 scripts/validate_azurefox_lab.py --mode full
+python3 scripts/validate_azurefox_lab.py --mode full --skip-command role-trusts
 ```
 
 Runtime notes:
 
-- `all-checks` is slower than a typical single-command AzureFox run
+- use `--mode full` as the single end-to-end validation run
+- `--mode full` no longer bundles `all-checks`; run `--mode all-checks-only` separately only when you intentionally want wrapper coverage
+- `commands-only` is now just an explicit standalone-only rerun alias for the same command family as `full`
+- if the live lab is already up and you only changed outputs or validator expectations, refresh the
+  OpenTofu state before rerunning validation so stale `validation_manifest` data does not cause a
+  false mismatch
 - use `--mode commands-only` when you want the individual command outputs without the orchestration pass
-- use `--mode all-checks-only` when you are specifically validating the section wrapper and artifact emission path
-- use `--mode full` for deliberate end-to-end validation, knowing that it repeats some collection surfaces by design
+- use `--mode all-checks-only` only when you are specifically validating the section wrapper and artifact emission path in isolation
+- do not treat `all-checks-only` as part of the default release-validation sequence unless we explicitly decide the wrapper coverage is required
+- `role-trusts` can take several minutes because the Azure API path is slow; the validator now emits periodic wait lines during that step instead of appearing hung
+- after `role-trusts` has been validated once for the current phase, reruns can use `--skip-command role-trusts` unless you changed that slice or hit a blocker that points back to it
+- more generally, do not rerun a known slow validation path by default; only pay that cost again
+  when the changed slice touches it, a live blocker points back to it, or the team explicitly wants
+  the extra proof
 
 Artifacts include:
 
@@ -328,8 +364,8 @@ What AzureFox can verify directly from read-only control-plane and Graph data:
 - that managed-identity token surfaces correlate across web workloads, VMs, and deployment history
 - that Azure-managed App Service and Function App hostnames are visible control-plane endpoint paths, not proven live ingress
 - that NIC-backed public ingress evidence comes from visible NSG allow rules rather than guessed reachability
-- that API Management, AKS, ACR, and Azure SQL service inventory stays evidence-based when only management metadata is visible
-- that DNS v1 proves zone inventory, visible record-set totals, delegation, and VNet-link counts only
+- that storage, API Management, AKS, ACR, and Azure SQL depth stays evidence-based when only management metadata is visible
+- that the current DNS boundary stays at zone inventory and private-endpoint-backed namespace usage rather than record export or live resolution proof
 
 What only the lab can confirm once infrastructure exists and the validator has been run:
 
@@ -357,6 +393,17 @@ Tear the lab down when you are done:
 ```bash
 tofu destroy
 ```
+
+Do not treat a local `tofu destroy` exit as the final source of truth by itself. Verify from Azure
+that the tagged lab footprint is actually gone before you call teardown complete:
+
+```bash
+az group list --query "[?tags.project=='azurefox-proof-lab'].{name:name,location:location,provisioningState:properties.provisioningState}" -o json
+az resource list --tag project=azurefox-proof-lab --query "[].{name:name,type:type,group:resourceGroup,location:location}" -o json
+```
+
+If either query still returns lab groups or resources, treat teardown as incomplete and retry or
+clean up the remaining blockers before you close the run.
 
 ## Terraform User Notes
 

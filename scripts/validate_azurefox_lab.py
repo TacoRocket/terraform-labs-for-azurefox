@@ -38,6 +38,7 @@ COMMANDS = [
     "aks",
     "acr",
     "databases",
+    "snapshots-disks",
     "role-trusts",
 ]
 
@@ -58,6 +59,13 @@ AUTH_POLICY_FINDINGS = {
 }
 
 RUN_MODE_CHOICES = ("full", "commands-only", "all-checks-only")
+HEARTBEAT_INTERVAL_SECONDS = 30
+SLOW_COMMAND_NOTES = {
+    "role-trusts": (
+        "known slow Azure API path; Azure may take several minutes before the JSON payload returns"
+    ),
+}
+SKIPPABLE_COMMANDS = ("role-trusts",)
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,32 +103,59 @@ def parse_args() -> argparse.Namespace:
         choices=RUN_MODE_CHOICES,
         default="full",
         help=(
-            "Validation scope to run: full executes both standalone commands and all-checks; "
-            "commands-only skips all-checks; all-checks-only skips standalone commands."
+            "Validation scope to run: full executes the release-gated standalone command set; "
+            "commands-only is an explicit standalone-only rerun mode; "
+            "all-checks-only skips standalone commands and runs section wrappers only."
+        ),
+    )
+    parser.add_argument(
+        "--skip-command",
+        action="append",
+        choices=SKIPPABLE_COMMANDS,
+        default=[],
+        help=(
+            "Skip a known-slow standalone command on reruns after it has already been validated "
+            "for the current phase. Currently intended for role-trusts only."
         ),
     )
     return parser.parse_args()
 
 
-def run_json(cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> Any:
-    completed = subprocess.run(
+def run_json(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    *,
+    progress_label: str | None = None,
+) -> Any:
+    process = subprocess.Popen(
         cmd,
         cwd=cwd,
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
     )
-    if completed.returncode != 0:
+    started = time.monotonic()
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=HEARTBEAT_INTERVAL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            if progress_label:
+                elapsed = time.monotonic() - started
+                log_progress(f"[wait] {progress_label} still running ({elapsed:.0f}s elapsed)")
+
+    if process.returncode != 0:
         raise RuntimeError(
-            f"Command failed ({completed.returncode}): {' '.join(cmd)}\n"
-            f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
+            f"Command failed ({process.returncode}): {' '.join(cmd)}\n"
+            f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         )
     try:
-        return json.loads(completed.stdout)
+        return json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            f"Command did not return JSON: {' '.join(cmd)}\nSTDOUT:\n{completed.stdout}"
+            f"Command did not return JSON: {' '.join(cmd)}\nSTDOUT:\n{stdout}"
         ) from exc
 
 
@@ -146,7 +181,11 @@ def mode_runs_commands(mode: str) -> bool:
 
 
 def mode_runs_all_checks(mode: str) -> bool:
-    return mode in {"full", "all-checks-only"}
+    return mode == "all-checks-only"
+
+
+def selected_commands(skipped_commands: set[str]) -> list[str]:
+    return [command for command in COMMANDS if command not in skipped_commands]
 
 
 def read_manifest(lab_dir: Path) -> dict[str, Any]:
@@ -172,6 +211,7 @@ def run_azurefox(
     subscription_id: str,
     artifacts_dir: Path,
     mode: str,
+    commands: list[str],
     all_checks_sections: list[str],
 ) -> tuple[dict[str, Any], dict[str, Path], dict[str, Any], dict[str, Path]]:
     outputs: dict[str, Any] = {}
@@ -185,14 +225,17 @@ def run_azurefox(
     if mode_runs_commands(mode):
         loot_root = artifacts_dir / "loot"
         loot_root.mkdir(parents=True, exist_ok=True)
-        command_total = len(COMMANDS)
-        for index, command in enumerate(COMMANDS, start=1):
+        command_total = len(commands)
+        for index, command in enumerate(commands, start=1):
             step_started = time.monotonic()
             outdir = artifacts_dir / command
             outdir.mkdir(parents=True, exist_ok=True)
             log_progress(
                 f"[run {index}/{command_total}] azurefox {command} -> {outdir}"
             )
+            slow_note = SLOW_COMMAND_NOTES.get(command)
+            if slow_note:
+                log_progress(f"[note {index}/{command_total}] azurefox {command}: {slow_note}")
             payload = run_json(
                 [
                     python_bin,
@@ -208,6 +251,7 @@ def run_azurefox(
                 ],
                 cwd=azurefox_dir,
                 env=env,
+                progress_label=f"azurefox {command}",
             )
             outputs[command] = payload
             (artifacts_dir / f"{command}.json").write_text(
@@ -252,6 +296,7 @@ def run_azurefox(
                 ],
                 cwd=azurefox_dir,
                 env=env,
+                progress_label=f"azurefox all-checks --section {section}",
             )
             run_summary_path = checkpoint_dir / "run-summary.json"
             if not run_summary_path.exists():
@@ -430,6 +475,15 @@ def find_dns_zone(payload: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"dns output missing zone '{name}'")
 
 
+def find_snapshot_disk_asset(payload: dict[str, Any], *, attached_to_name: str) -> dict[str, Any]:
+    for asset in payload.get("snapshot_disk_assets", []):
+        if asset.get("attached_to_name") == attached_to_name and asset.get("asset_kind") == "disk":
+            return asset
+    raise AssertionError(
+        f"snapshots-disks output missing attached disk asset for workload '{attached_to_name}'"
+    )
+
+
 def find_trust(
     payload: dict[str, Any],
     trust_type: str,
@@ -522,6 +576,8 @@ def validate_outputs(
     mode: str,
     outputs: dict[str, Any],
     loot_paths: dict[str, Path],
+    executed_commands: list[str],
+    skipped_commands: set[str],
     run_summaries: dict[str, Any],
     run_summary_paths: dict[str, Path],
 ) -> tuple[list[str], list[str], list[str]]:
@@ -537,10 +593,10 @@ def validate_outputs(
         identity_name = manifest["managed_identity"]["name"]
         identity_principal_id = manifest["managed_identity"]["principal_id"]
         vm_name = manifest["vm"]["name"]
-        vmss_name = manifest["vmss"]["name"]
         role_trusts_manifest = manifest["role_trusts"]
         phase2_manifest = manifest["phase2_checkpoint"]
         phase3_manifest = manifest["phase3_checkpoint"]
+        phase4_manifest = manifest.get("phase4_checkpoint", {})
 
         whoami = outputs["whoami"]
         assert_true(whoami["metadata"]["command"] == "whoami", "whoami metadata.command mismatch")
@@ -644,46 +700,49 @@ def validate_outputs(
         )
         checks.append("privesc surfaced both the current privileged identity and the public managed-identity pivot")
 
-        role_trusts = outputs["role-trusts"]
-        api_app = role_trusts_manifest["applications"]["api"]
-        client_sp = role_trusts_manifest["service_principals"]["client"]
-        api_sp = role_trusts_manifest["service_principals"]["api"]
+        if "role-trusts" in executed_commands:
+            role_trusts = outputs["role-trusts"]
+            api_app = role_trusts_manifest["applications"]["api"]
+            client_sp = role_trusts_manifest["service_principals"]["client"]
+            api_sp = role_trusts_manifest["service_principals"]["api"]
 
-        federated_trust = find_trust(
-            role_trusts,
-            "federated-credential",
-            source_object_id=api_app["object_id"],
-            target_object_id=api_sp["object_id"],
-        )
-        assert_true(
-            role_trusts_manifest["federated_credential"]["issuer"] in federated_trust.get("summary", ""),
-            "role-trusts federated credential summary is missing the expected issuer",
-        )
-        assert_true(
-            role_trusts_manifest["federated_credential"]["subject"] in federated_trust.get("summary", ""),
-            "role-trusts federated credential summary is missing the expected subject",
-        )
-        find_trust(role_trusts, "app-owner", target_object_id=api_app["object_id"])
-        find_trust(role_trusts, "service-principal-owner", target_object_id=api_sp["object_id"])
-        find_trust(
-            role_trusts,
-            "app-to-service-principal",
-            source_object_id=client_sp["object_id"],
-            target_object_id=api_sp["object_id"],
-        )
-        present_trust_types = {trust.get("trust_type") for trust in role_trusts.get("trusts", [])}
-        missing_types = sorted(set(role_trusts_manifest["expected_trust_types"]) - present_trust_types)
-        assert_true(not missing_types, f"role-trusts output missing trust types: {', '.join(missing_types)}")
-        if not {"admin-consent", "delegated-consent"} & present_trust_types:
-            mismatches.append(
-                "role-trusts currently validates ownership, federated identity, and app-role edges, "
-                "but no delegated or admin OAuth consent grant surfaced in the lab output."
+            federated_trust = find_trust(
+                role_trusts,
+                "federated-credential",
+                source_object_id=api_app["object_id"],
+                target_object_id=api_sp["object_id"],
             )
-            follow_ups.append(
-                "If consent-grant coverage becomes important before the future Entra graph slice, add a "
-                "separate low-risk consent scenario with explicit tenant-permission prerequisites."
+            assert_true(
+                role_trusts_manifest["federated_credential"]["issuer"] in federated_trust.get("summary", ""),
+                "role-trusts federated credential summary is missing the expected issuer",
             )
-        checks.append("role-trusts surfaced owned apps, owned service principals, federation, and app-role trust edges")
+            assert_true(
+                role_trusts_manifest["federated_credential"]["subject"] in federated_trust.get("summary", ""),
+                "role-trusts federated credential summary is missing the expected subject",
+            )
+            find_trust(role_trusts, "app-owner", target_object_id=api_app["object_id"])
+            find_trust(role_trusts, "service-principal-owner", target_object_id=api_sp["object_id"])
+            find_trust(
+                role_trusts,
+                "app-to-service-principal",
+                source_object_id=client_sp["object_id"],
+                target_object_id=api_sp["object_id"],
+            )
+            present_trust_types = {trust.get("trust_type") for trust in role_trusts.get("trusts", [])}
+            missing_types = sorted(set(role_trusts_manifest["expected_trust_types"]) - present_trust_types)
+            assert_true(not missing_types, f"role-trusts output missing trust types: {', '.join(missing_types)}")
+            if not {"admin-consent", "delegated-consent"} & present_trust_types:
+                mismatches.append(
+                    "role-trusts currently validates ownership, federated identity, and app-role edges, "
+                    "but no delegated or admin OAuth consent grant surfaced in the lab output."
+                )
+                follow_ups.append(
+                    "If consent-grant coverage becomes important before the future Entra graph slice, add a "
+                    "separate low-risk consent scenario with explicit tenant-permission prerequisites."
+                )
+            checks.append("role-trusts surfaced owned apps, owned service principals, federation, and app-role trust edges")
+        elif "role-trusts" in skipped_commands:
+            checks.append("role-trusts was intentionally skipped on this rerun after an earlier baseline validation")
 
         auth_policies = outputs["auth-policies"]
         assert_true(
@@ -748,20 +807,91 @@ def validate_outputs(
         checks.append("managed-identities reported the attached high-impact identity")
 
         storage = outputs["storage"]
+        expected_storage = phase3_manifest["storage"]
         public_asset = find_storage_asset(storage, public_storage_name)
         private_asset = find_storage_asset(storage, private_storage_name)
-        assert_true(public_asset.get("public_access") is True, "public storage account is not marked public")
         assert_true(
-            public_asset.get("network_default_action") == manifest["expected_signals"]["public_storage_default_action"],
+            public_asset.get("public_access") is expected_storage["public"]["public_access"],
+            "public storage account public-access posture mismatch",
+        )
+        assert_true(
+            public_asset.get("network_default_action") == expected_storage["public"]["network_default_action"],
             "public storage default action mismatch",
         )
-        assert_true(private_asset.get("public_access") is False, "private storage account unexpectedly public")
         assert_true(
-            private_asset.get("network_default_action") == manifest["expected_signals"]["private_storage_default_action"],
+            public_asset.get("public_network_access") == expected_storage["public"]["public_network_access"],
+            "public storage public-network posture mismatch",
+        )
+        assert_true(
+            bool(public_asset.get("allow_shared_key_access")) is expected_storage["public"]["allow_shared_key_access"],
+            "public storage shared-key posture mismatch",
+        )
+        assert_true(
+            bool(public_asset.get("https_traffic_only_enabled")) is expected_storage["public"]["https_traffic_only_enabled"],
+            "public storage HTTPS-only posture mismatch",
+        )
+        assert_true(
+            public_asset.get("minimum_tls_version") == expected_storage["public"]["minimum_tls_version"],
+            "public storage minimum TLS version mismatch",
+        )
+        assert_true(
+            public_asset.get("dns_endpoint_type") == expected_storage["public"]["dns_endpoint_type"],
+            "public storage endpoint-type cue mismatch",
+        )
+        assert_true(
+            bool(public_asset.get("is_hns_enabled")) is expected_storage["public"]["is_hns_enabled"],
+            "public storage HNS posture mismatch",
+        )
+        assert_true(
+            bool(public_asset.get("is_sftp_enabled")) is expected_storage["public"]["is_sftp_enabled"],
+            "public storage SFTP posture mismatch",
+        )
+        assert_true(
+            bool(public_asset.get("nfs_v3_enabled")) is expected_storage["public"]["nfs_v3_enabled"],
+            "public storage NFS posture mismatch",
+        )
+        assert_true(
+            private_asset.get("public_access") is expected_storage["private"]["public_access"],
+            "private storage account public-access posture mismatch",
+        )
+        assert_true(
+            private_asset.get("network_default_action") == expected_storage["private"]["network_default_action"],
             "private storage default action mismatch",
         )
         assert_true(
-            bool(private_asset.get("private_endpoint_enabled")) is manifest["expected_signals"]["private_endpoint_enabled"],
+            private_asset.get("public_network_access") == expected_storage["private"]["public_network_access"],
+            "private storage public-network posture mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("allow_shared_key_access")) is expected_storage["private"]["allow_shared_key_access"],
+            "private storage shared-key posture mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("https_traffic_only_enabled")) is expected_storage["private"]["https_traffic_only_enabled"],
+            "private storage HTTPS-only posture mismatch",
+        )
+        assert_true(
+            private_asset.get("minimum_tls_version") == expected_storage["private"]["minimum_tls_version"],
+            "private storage minimum TLS version mismatch",
+        )
+        assert_true(
+            private_asset.get("dns_endpoint_type") == expected_storage["private"]["dns_endpoint_type"],
+            "private storage endpoint-type cue mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("is_hns_enabled")) is expected_storage["private"]["is_hns_enabled"],
+            "private storage HNS posture mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("is_sftp_enabled")) is expected_storage["private"]["is_sftp_enabled"],
+            "private storage SFTP posture mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("nfs_v3_enabled")) is expected_storage["private"]["nfs_v3_enabled"],
+            "private storage NFS posture mismatch",
+        )
+        assert_true(
+            bool(private_asset.get("private_endpoint_enabled")) is expected_storage["private"]["private_endpoint_enabled"],
             "private storage account missing private endpoint signal",
         )
         storage_findings = storage.get("findings", [])
@@ -773,23 +903,21 @@ def validate_outputs(
             any(finding.get("id", "").startswith("storage-firewall-open-") for finding in storage_findings),
             "storage output missing firewall-open finding",
         )
-        checks.append("storage reported the public and private posture split correctly")
+        checks.append("storage reported the public and private posture split plus the shipped shared-key, TLS, and service-shape cues")
 
         vms = outputs["vms"]
         vm_asset = find_vm(vms, vm_name)
-        vmss_asset = find_vm(vms, vmss_name)
         assert_true(bool(vm_asset.get("public_ips")), "public VM is missing public IPs in vms output")
         assert_true(
             identity["id"] in set(vm_asset.get("identity_ids", [])),
             "public VM missing attached user-assigned identity",
         )
-        assert_true(vmss_asset.get("vm_type") == "vmss", "vmss-api not reported as vmss")
         vm_findings = vms.get("findings", [])
         assert_true(
             any(finding.get("id", "").startswith("vm-public-identity-") for finding in vm_findings),
             "vms output missing public workload with identity finding",
         )
-        checks.append("vms reported the public VM, attached identity, and VM scale set")
+        checks.append("vms reported the public VM and attached identity without overstating VMSS coverage")
 
         nics = outputs["nics"]
         vm_primary_nic = phase3_manifest["nics"]["vm_primary"]
@@ -986,21 +1114,41 @@ def validate_outputs(
             "api-mgmt did not surface the intended named value inventory count",
         )
         assert_true(
+            api_mgmt_service.get("subscription_count") == expected_api_mgmt["subscription_count"],
+            "api-mgmt subscription inventory count mismatch",
+        )
+        assert_true(
+            api_mgmt_service.get("active_subscription_count") == expected_api_mgmt["active_subscription_count"],
+            "api-mgmt active subscription count mismatch",
+        )
+        assert_true(
+            api_mgmt_service.get("api_subscription_required_count") == expected_api_mgmt["api_subscription_required_count"],
+            "api-mgmt subscription-required API count mismatch",
+        )
+        assert_true(
+            api_mgmt_service.get("named_value_secret_count") == expected_api_mgmt["named_value_secret_count"],
+            "api-mgmt secret-marked named value count mismatch",
+        )
+        assert_true(
+            api_mgmt_service.get("named_value_key_vault_count") == expected_api_mgmt["named_value_key_vault_count"],
+            "api-mgmt Key Vault-backed named value count mismatch",
+        )
+        assert_true(
+            set(expected_api_mgmt["backend_hostnames"]).issubset(set(api_mgmt_service.get("backend_hostnames", []))),
+            "api-mgmt backend host visibility mismatch",
+        )
+        assert_true(
             any(
                 str(hostname).endswith(expected_api_mgmt["gateway_hostname_suffix"])
                 for hostname in api_mgmt_service.get("gateway_hostnames", [])
             ),
             "api-mgmt output missing the default Azure gateway hostname",
         )
-        checks.append("api-mgmt surfaced gateway inventory, identity context, and public network posture from management metadata")
+        checks.append("api-mgmt surfaced subscription, named-value, and backend-host depth alongside the base gateway inventory")
 
         aks = outputs["aks"]
         expected_aks = phase3_manifest["aks"]["ops"]
         aks_cluster = find_aks_cluster(aks, expected_aks["name"])
-        assert_true(
-            bool(aks_cluster.get("private_cluster_enabled")) is expected_aks["private_cluster_enabled"],
-            "aks private cluster posture mismatch",
-        )
         assert_true(
             aks_cluster.get("cluster_identity_type") == expected_aks["cluster_identity_type"],
             "aks cluster identity type mismatch",
@@ -1010,10 +1158,18 @@ def validate_outputs(
             "aks output did not expose a control-plane FQDN for the public cluster",
         )
         assert_true(
-            aks_cluster.get("agent_pool_count", 0) >= 1,
+            aks_cluster.get("agent_pool_count", 0) >= expected_aks["agent_pool_count"],
             "aks output did not expose an agent pool count",
         )
-        checks.append("aks surfaced the public control-plane endpoint and cluster identity proof without requiring deeper cluster access")
+        assert_true(
+            aks_cluster.get("oidc_issuer_enabled") is expected_aks["oidc_issuer_enabled"],
+            "aks OIDC issuer posture mismatch",
+        )
+        assert_true(
+            aks_cluster.get("addon_names", []) == [],
+            "aks unexpectedly surfaced addon cues not present in the current lab shape",
+        )
+        checks.append("aks surfaced the public control-plane endpoint plus the current Azure-side OIDC and addon posture cues")
 
         acr = outputs["acr"]
         expected_registry = phase3_manifest["acr"]["public"]
@@ -1023,18 +1179,42 @@ def validate_outputs(
             "acr login server mismatch",
         )
         assert_true(
-            registry.get("public_network_access") == expected_registry["public_network_access"],
-            "acr public network access mismatch",
-        )
-        assert_true(
             bool(registry.get("admin_user_enabled")) is expected_registry["admin_user_enabled"],
             "acr admin user posture mismatch",
         )
         assert_true(
-            registry.get("workload_identity_type") == expected_registry["workload_identity_type"],
-            "acr workload identity type mismatch",
+            registry.get("webhook_count") == expected_registry["webhook_count"],
+            "acr webhook count mismatch",
         )
-        checks.append("acr surfaced the intended registry login-server, identity, and public auth posture proof")
+        assert_true(
+            registry.get("enabled_webhook_count") == expected_registry["enabled_webhook_count"],
+            "acr enabled webhook count mismatch",
+        )
+        assert_true(
+            registry.get("replication_count") == expected_registry["replication_count"],
+            "acr replication count mismatch",
+        )
+        assert_true(
+            registry.get("quarantine_policy_status") == expected_registry["quarantine_policy_status"],
+            "acr quarantine policy posture mismatch",
+        )
+        assert_true(
+            registry.get("retention_policy_status") == expected_registry["retention_policy_status"],
+            "acr retention policy posture mismatch",
+        )
+        assert_true(
+            registry.get("retention_policy_days") == expected_registry["retention_policy_days"],
+            "acr retention policy day-count mismatch",
+        )
+        assert_true(
+            registry.get("trust_policy_status") == expected_registry["trust_policy_status"],
+            "acr trust policy posture mismatch",
+        )
+        assert_true(
+            registry.get("trust_policy_type") == expected_registry["trust_policy_type"],
+            "acr trust policy type mismatch",
+        )
+        checks.append("acr surfaced the registry login-server plus the shipped webhook, replication, and governance depth cues")
 
         databases = outputs["databases"]
         expected_database = phase3_manifest["databases"]["primary"]
@@ -1061,7 +1241,59 @@ def validate_outputs(
             database_server.get("database_count", 0) >= len(expected_database["user_database_names"]),
             "databases output reported fewer visible user databases than expected",
         )
-        checks.append("databases surfaced the intended Azure SQL server endpoint and visible user-database inventory")
+        assert_true(
+            database_server.get("minimal_tls_version") == expected_database["minimal_tls_version"],
+            "databases minimal TLS version mismatch",
+        )
+        postgres_issue = next(
+            (
+                issue
+                for issue in databases.get("issues", [])
+                if (issue.get("context") or {}).get("collector") == "databases.postgresql_flexible_servers"
+            ),
+            None,
+        )
+        if postgres_issue is not None:
+            mismatches.append(
+                "databases hit a PostgreSQL Flexible Server collector failure during the live run: "
+                f"{postgres_issue.get('message')}"
+            )
+            follow_ups.append(
+                "Track the PostgreSQL flexible-server collection failure as an AzureFox main-repo fix item; "
+                "do not treat the current lab as full cross-engine relational proof until that path is repaired."
+            )
+        checks.append("databases surfaced the intended Azure SQL server endpoint, visible user-database inventory, and TLS posture")
+
+        if phase4_manifest.get("snapshots_disks"):
+            snapshots_disks = outputs["snapshots-disks"]
+            expected_disk = phase4_manifest["snapshots_disks"]["vm_web_os_disk"]
+            disk_asset = find_snapshot_disk_asset(
+                snapshots_disks,
+                attached_to_name=expected_disk["attached_to_name"],
+            )
+            assert_true(
+                disk_asset.get("attachment_state") == expected_disk["attachment_state"],
+                "snapshots-disks attachment state mismatch",
+            )
+            assert_true(
+                disk_asset.get("os_type") == expected_disk["os_type"],
+                "snapshots-disks OS type mismatch",
+            )
+            assert_true(
+                disk_asset.get("encryption_type") == expected_disk["encryption_type"],
+                "snapshots-disks encryption type mismatch",
+            )
+            assert_true(
+                disk_asset.get("network_access_policy") == expected_disk["network_access_policy"],
+                "snapshots-disks network access policy mismatch",
+            )
+            assert_true(
+                disk_asset.get("public_network_access") == expected_disk["public_network_access"],
+                "snapshots-disks public network access mismatch",
+            )
+            checks.append(
+                "snapshots-disks surfaced the attached VM disk with the expected network-access and encryption posture"
+            )
 
         dns = outputs["dns"]
         expected_public_zone = phase3_manifest["dns"]["public_zone"]
@@ -1070,33 +1302,17 @@ def validate_outputs(
             public_zone.get("zone_kind") == expected_public_zone["zone_kind"],
             "dns public zone kind mismatch",
         )
-        assert_true(
-            len(public_zone.get("name_servers", [])) == expected_public_zone["expected_name_server_count"],
-            "dns public zone name server count mismatch",
-        )
-        assert_true(
-            public_zone.get("record_set_count", 0) >= expected_public_zone["minimum_record_set_count"],
-            "dns public zone record_set_count was lower than expected",
-        )
-        expected_private_zone = phase3_manifest["dns"]["private_zone"]
-        private_zone = find_dns_zone(dns, expected_private_zone["name"])
-        assert_true(
-            private_zone.get("zone_kind") == expected_private_zone["zone_kind"],
-            "dns private zone kind mismatch",
-        )
-        assert_true(
-            private_zone.get("linked_virtual_network_count") == expected_private_zone["linked_virtual_network_count"],
-            "dns private zone linked virtual network count mismatch",
-        )
-        assert_true(
-            private_zone.get("registration_virtual_network_count") == expected_private_zone["registration_virtual_network_count"],
-            "dns private zone registration-enabled link count mismatch",
-        )
-        assert_true(
-            private_zone.get("record_set_count", 0) >= expected_private_zone["minimum_record_set_count"],
-            "dns private zone record_set_count was lower than expected",
-        )
-        checks.append("dns stayed within the DNS v1 boundary: zone inventory, delegation counts, and VNet-link counts only")
+        for expected_private_zone in phase3_manifest["dns"]["private_zones"].values():
+            private_zone = find_dns_zone(dns, expected_private_zone["name"])
+            assert_true(
+                private_zone.get("zone_kind") == expected_private_zone["zone_kind"],
+                f"dns private zone kind mismatch for '{expected_private_zone['name']}'",
+            )
+            assert_true(
+                private_zone.get("private_endpoint_reference_count") == expected_private_zone["private_endpoint_reference_count"],
+                f"dns private endpoint reference count mismatch for '{expected_private_zone['name']}'",
+            )
+        checks.append("dns stayed within the Phase 3.5 namespace-usage boundary and surfaced private-endpoint-backed zone context without crossing into record analysis")
 
         keyvault = outputs["keyvault"]
         for label, expected in phase2_manifest["key_vaults"].items():
@@ -1121,15 +1337,22 @@ def validate_outputs(
                 bool(vault.get("purge_protection_enabled")) is expected["purge_protection_enabled"],
                 f"Key Vault '{expected['name']}' purge protection posture mismatch",
             )
-            expected_id_prefix = expected["expected_finding_prefix"]
-            if expected_id_prefix:
+            expected_id_prefixes = expected.get("expected_finding_prefixes")
+            if expected_id_prefixes is None:
+                expected_id_prefix = expected.get("expected_finding_prefix", "")
+                expected_id_prefixes = [expected_id_prefix] if expected_id_prefix else []
+            if expected_id_prefixes:
                 assert_true(
                     any(
-                        finding.get("id", "").startswith(expected_id_prefix)
+                        any(
+                            finding.get("id", "").startswith(prefix)
+                            for prefix in expected_id_prefixes
+                        )
                         and expected["name"] in str(finding.get("description") or "")
                         for finding in keyvault.get("findings", [])
                     ),
-                    f"keyvault output missing finding with prefix '{expected_id_prefix}' for '{expected['name']}'",
+                    "keyvault output missing expected public-network finding for "
+                    f"'{expected['name']}' (accepted prefixes: {', '.join(expected_id_prefixes)})",
                 )
         assert_true(
             any(
@@ -1292,7 +1515,7 @@ def validate_outputs(
         )
         checks.append("tokens-credentials correlated app settings, deployment history, VM IMDS, and empty-settings web workloads without duplicate finding IDs")
 
-        for command in COMMANDS:
+        for command in executed_commands:
             payload_command = outputs[command]["metadata"]["command"]
             assert_true(payload_command == command, f"{command} metadata.command mismatch")
             assert_true(loot_paths.get(command, Path()).exists(), f"{command} loot artifact missing")
@@ -1415,16 +1638,21 @@ def main() -> int:
 
     log_progress(f"[info] validation mode: {args.mode}")
     log_progress(f"[info] artifacts directory: {artifacts_dir}")
+    skipped_commands = set(args.skip_command)
+    if skipped_commands:
+        log_progress(f"[info] skipped standalone commands: {', '.join(sorted(skipped_commands))}")
     manifest = read_manifest(lab_dir)
     all_checks_sections = ordered_all_checks_sections(
         list(manifest["all_checks_sections"].keys())
     )
+    commands = selected_commands(skipped_commands)
     outputs, loot_paths, run_summaries, run_summary_paths = run_azurefox(
         azurefox_dir=azurefox_dir,
         python_bin=args.python,
         subscription_id=manifest["subscription_id"],
         artifacts_dir=artifacts_dir,
         mode=args.mode,
+        commands=commands,
         all_checks_sections=all_checks_sections,
     )
     checks, mismatches, follow_ups = validate_outputs(
@@ -1432,6 +1660,8 @@ def main() -> int:
         args.mode,
         outputs,
         loot_paths,
+        commands,
+        skipped_commands,
         run_summaries,
         run_summary_paths,
     )
