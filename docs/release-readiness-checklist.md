@@ -24,9 +24,11 @@ Use this before tagging a lab release candidate.
 
 ## Validation Readiness
 
-- `validation_manifest` still matches the Terraform-produced lab shape.
+- `validation_manifest` still matches the OpenTofu-produced lab shape.
 - `scripts/validate_azurefox_lab.py` still validates the intended AzureFox command set.
 - `--mode full`, `--mode commands-only`, and `--mode all-checks-only` all behave as documented.
+- `--mode full` remains the single end-to-end validation gate for release readiness.
+- `--mode commands-only` is only an explicit standalone rerun alias, while `--mode all-checks-only` stays a separate wrapper-check path rather than part of the default release gate.
 - proof artifacts are written deterministically enough for operator review.
 - mismatch and follow-up reports stay evidence-based instead of normalizing live drift.
 
@@ -37,6 +39,8 @@ Use this before tagging a lab release candidate.
   environment.
 - proof artifacts were reviewed after the live run and do not show unexplained drift.
 - `tofu destroy` succeeds cleanly after validation.
+- Azure API checks confirm that tagged lab resource groups and resources are actually gone after
+  destroy; do not infer teardown success from local OpenTofu output alone.
 
 ## Release Notes Readiness
 

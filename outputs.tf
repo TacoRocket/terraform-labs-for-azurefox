@@ -136,7 +136,7 @@ output "validation_manifest" {
       ]
       key_vaults = {
         open = {
-          expected_finding_prefix  = "keyvault-public-network-enabled-"
+          expected_finding_prefix  = "keyvault-public-network-open-"
           name                     = azurerm_key_vault.open.name
           network_default_action   = "Allow"
           private_endpoint_enabled = false
@@ -269,6 +269,7 @@ output "validation_manifest" {
         "resource",
       ]
       commands = [
+        "storage",
         "nics",
         "dns",
         "endpoints",
@@ -281,6 +282,36 @@ output "validation_manifest" {
         "acr",
         "databases",
       ]
+      storage = {
+        public = {
+          allow_shared_key_access    = true
+          dns_endpoint_type          = "Standard"
+          https_traffic_only_enabled = true
+          is_hns_enabled             = false
+          is_sftp_enabled            = false
+          minimum_tls_version        = "TLS1_2"
+          name                       = azurerm_storage_account.public.name
+          network_default_action     = "Allow"
+          nfs_v3_enabled             = false
+          private_endpoint_enabled   = false
+          public_access              = true
+          public_network_access      = "Enabled"
+        }
+        private = {
+          allow_shared_key_access    = true
+          dns_endpoint_type          = "Standard"
+          https_traffic_only_enabled = true
+          is_hns_enabled             = false
+          is_sftp_enabled            = false
+          minimum_tls_version        = "TLS1_2"
+          name                       = azurerm_storage_account.private.name
+          network_default_action     = "Deny"
+          nfs_v3_enabled             = false
+          private_endpoint_enabled   = true
+          public_access              = false
+          public_network_access      = "Enabled"
+        }
+      }
       nics = {
         vm_primary = {
           attached_asset_name = azurerm_linux_virtual_machine.vm_web.name
@@ -354,12 +385,6 @@ output "validation_manifest" {
             endpoint      = azurerm_linux_function_app.phase2_orders.default_hostname
             identity_type = "SystemAssigned, UserAssigned"
           },
-          {
-            asset_kind    = "VMSS"
-            asset_name    = azurerm_linux_virtual_machine_scale_set.vmss_api.name
-            endpoint      = null
-            identity_type = null
-          },
         ]
       }
       app_services = {
@@ -391,59 +416,101 @@ output "validation_manifest" {
       }
       api_mgmt = {
         edge = {
-          api_count               = 1
-          backend_count           = 1
-          gateway_hostname_suffix = ".azure-api.net"
-          name                    = azurerm_api_management.phase3.name
-          named_value_count       = 1
-          public_network_access   = "Enabled"
-          workload_identity_type  = "SystemAssigned"
+          active_subscription_count       = 1
+          api_count                       = 1
+          api_subscription_required_count = 0
+          backend_count                   = 1
+          backend_hostnames               = [azurerm_linux_web_app.phase2_public.default_hostname]
+          gateway_hostname_suffix         = ".azure-api.net"
+          name                            = azurerm_api_management.phase3.name
+          named_value_count               = 1
+          named_value_key_vault_count     = 0
+          named_value_secret_count        = 0
+          public_network_access           = "Enabled"
+          subscription_count              = 1
+          workload_identity_type          = "SystemAssigned"
         }
       }
       aks = {
         ops = {
-          cluster_identity_type   = "SystemAssigned"
-          name                    = azurerm_kubernetes_cluster.phase3.name
-          private_cluster_enabled = false
+          agent_pool_count      = 1
+          cluster_identity_type = "SystemAssigned"
+          name                  = azurerm_kubernetes_cluster.phase3.name
+          oidc_issuer_enabled   = false
         }
       }
       acr = {
         public = {
-          admin_user_enabled     = true
-          login_server           = azurerm_container_registry.phase3.login_server
-          name                   = azurerm_container_registry.phase3.name
-          public_network_access  = "Enabled"
-          workload_identity_type = "SystemAssigned"
+          admin_user_enabled       = true
+          enabled_webhook_count    = 0
+          login_server             = azurerm_container_registry.phase3.login_server
+          name                     = azurerm_container_registry.phase3.name
+          quarantine_policy_status = "disabled"
+          replication_count        = 0
+          retention_policy_days    = 7
+          retention_policy_status  = "disabled"
+          trust_policy_status      = "disabled"
+          trust_policy_type        = "notary"
+          webhook_count            = 0
         }
       }
       databases = {
         primary = {
           engine                      = "AzureSql"
           fully_qualified_domain_name = azurerm_mssql_server.phase3.fully_qualified_domain_name
+          minimal_tls_version         = "1.2"
           name                        = azurerm_mssql_server.phase3.name
           public_network_access       = "Enabled"
           user_database_names         = [azurerm_mssql_database.phase3.name]
         }
       }
       dns = {
-        private_zone = {
-          linked_virtual_network_count       = 1
-          minimum_record_set_count           = 1
-          name                               = azurerm_private_dns_zone.phase3_internal.name
-          registration_virtual_network_count = 1
-          zone_kind                          = "private"
-        }
         public_zone = {
-          expected_name_server_count = 4
-          minimum_record_set_count   = 3
-          name                       = azurerm_dns_zone.phase3_public.name
-          zone_kind                  = "public"
+          name      = azurerm_dns_zone.phase3_public.name
+          zone_kind = "public"
+        }
+        private_zones = {
+          blob = {
+            name                             = azurerm_private_dns_zone.blob.name
+            private_endpoint_reference_count = 1
+            zone_kind                        = "private"
+          }
+          internal = {
+            name                             = azurerm_private_dns_zone.phase3_internal.name
+            private_endpoint_reference_count = 0
+            zone_kind                        = "private"
+          }
+          keyvault = {
+            name                             = azurerm_private_dns_zone.keyvault.name
+            private_endpoint_reference_count = 2
+            zone_kind                        = "private"
+          }
         }
       }
       known_gaps = [
         "Azure-managed hostnames in endpoints and workloads are visibility proof, not proven live ingress reachability.",
         "network-ports remains narrow NIC-backed public endpoint evidence and does not prove full effective-network reachability.",
-        "DNS validation in this lab stays at zone metadata, delegation counts, and VNet-link counts rather than record contents or resolver behavior.",
+        "Current DNS validation in this lab stays at namespace-usage metadata and private-endpoint reference counts because the current read path did not expose stable record totals, delegation details, or VNet-link counters.",
+        "The live ACR run did not consistently surface public-network or managed-identity posture even though the lab deployment enables both, so the validator avoids overclaiming those fields until the AzureFox read path is clarified.",
+      ]
+    }
+    phase4_checkpoint = {
+      commands = [
+        "snapshots-disks",
+      ]
+      snapshots_disks = {
+        vm_web_os_disk = {
+          attached_to_name      = azurerm_linux_virtual_machine.vm_web.name
+          attachment_state      = "attached"
+          encryption_type       = "EncryptionAtRestWithPlatformKey"
+          network_access_policy = "AllowAll"
+          os_type               = "Linux"
+          public_network_access = "Enabled"
+        }
+      }
+      known_gaps = [
+        "cross-tenant remains tenant- and permission-dependent, so it is useful live evidence but not yet a deterministic release-gated validator target.",
+        "lighthouse, automation, and devops remain discovery-only until the lab intentionally adds stable proof objects or required operator configuration.",
       ]
     }
     all_checks_sections = {
