@@ -49,9 +49,9 @@ stored in `VERSION`.
 ### Added
 
 - Phase 3.5 checkpoint note for the AzureFox `1.1.0` release boundary:
-  [phase3-compute-apps-network-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase3-compute-apps-network-checkpoint-2026-04-08.md)
+  `docs/phase3-compute-apps-network-checkpoint.md`
 - Phase 4 live-capture note for the AzureFox `1.2.0` command lane:
-  [phase4-command-discovery-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase4-command-discovery-checkpoint-2026-04-08.md)
+  `docs/phase4-command-discovery-checkpoint.md`
 
 ### Changed
 
