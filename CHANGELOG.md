@@ -10,6 +10,10 @@ stored in `VERSION`.
 
 ## [Unreleased]
 
+No unreleased entries yet.
+
+## [1.3.0] - 2026-04-09
+
 ### Changed
 
 - retired the removed AzureFox `all-checks` path from the lab validator and current operator docs
@@ -20,6 +24,9 @@ stored in `VERSION`.
   packaged with run-window phase markers without introducing a separate Azure logging backend
 - added validator-emitted `command-timeline.json` artifacts plus bundle-export support so SOC
   analysts can line AzureFox command start and finish times up with raw Azure Activity Log windows
+- bumped the lab `VERSION` and release-boundary docs to match Firefox/AzureFox `1.3.0`
+- kept the standalone validation gate unchanged while documenting that grouped `chains` follow-up
+  remains optional even though AzureFox `1.3.0` tightened `credential-path` handling upstream
 
 ## [1.2.0] - 2026-04-05
 

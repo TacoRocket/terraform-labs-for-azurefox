@@ -89,10 +89,11 @@ Current checkpoint notes:
 
 Current release boundary:
 
-- this repo now targets AzureFox `1.2.0` / Phase 4 as the current parity boundary
+- this repo now targets AzureFox `1.3.0` as the current parity boundary
 - deterministic lab-backed proof now includes `snapshots-disks`, `vmss`, and one Automation account
 - `lighthouse` and `cross-tenant` are validated as evidence-led tenant surfaces rather than fixed row-count proof
 - `devops` is validated conditionally: without `AZUREFOX_DEVOPS_ORG`, the validator expects the truthful missing-organization issue instead of pretending pipeline coverage exists
+- grouped `chains` follow-up remains optional here; Firefox/AzureFox `1.3.0` added more live-proof-aware `credential-path` wording, but this lab still treats grouped chain output as secondary to the standalone validation gate
 
 ## Lab Shape
 

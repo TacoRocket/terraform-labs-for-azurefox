@@ -18,11 +18,12 @@ Version alignment rule:
 
 Current release boundary:
 
-- the current lab release candidate aligns to AzureFox `1.2.0` / Phase 4 parity
+- the current lab release candidate aligns to AzureFox `1.3.0`
 - the repo's `full` validator now matches that standalone release gate directly
 - deterministic lab-backed proof now includes `snapshots-disks`, `vmss`, and one Automation account
 - `lighthouse` and `cross-tenant` remain evidence-led because their truth boundary depends on live tenant posture
 - `devops` remains conditional on a real Azure DevOps organization and should stay explicit about that operator prerequisite in release notes
+- grouped `chains` follow-up remains optional; AzureFox `1.3.0` tightened `credential-path` handling and wording without changing this lab's standalone release gate
 - treat this lab as a v1 artifact, not a `0.x` preview line
 
 ## Release Goals
