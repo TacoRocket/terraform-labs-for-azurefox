@@ -30,7 +30,7 @@ command implementation, and release source of truth.
 
 ## AzureFox Coverage
 
-The lab is built to exercise this release-gated subset of AzureFox commands and sections. AzureFox
+The lab is built to exercise this release-gated subset of AzureFox standalone commands. AzureFox
 may have additional commands on `main` that are still discovery-only or not yet backed by
 deterministic lab proof objects.
 
@@ -38,6 +38,8 @@ Current validator coverage:
 
 - `whoami`
 - `inventory`
+- `automation`
+- `devops`
 - `arm-deployments`
 - `env-vars`
 - `tokens-credentials`
@@ -46,12 +48,15 @@ Current validator coverage:
 - `permissions`
 - `privesc`
 - `role-trusts`
+- `lighthouse`
+- `cross-tenant`
 - `resource-trusts`
 - `auth-policies`
 - `managed-identities`
 - `keyvault`
 - `storage`
 - `vms`
+- `vmss`
 - `nics`
 - `dns`
 - `endpoints`
@@ -64,28 +69,33 @@ Current validator coverage:
 - `acr`
 - `databases`
 - `snapshots-disks`
-- `all-checks --section identity`
-- `all-checks --section network`
-- `all-checks --section compute`
-- `all-checks --section config`
-- `all-checks --section secrets`
-- `all-checks --section resource`
+
+Optional grouped follow-up:
+
+- `chains credential-path`
+- `chains deployment-path`
+- `chains escalation-path`
 
 The project is OpenTofu-first, but the HCL stays close to standard Terraform style so it feels
 familiar to most operators.
 
 Current checkpoint notes:
 
-- `docs/phase3-compute-apps-network-checkpoint.md`
-- `docs/phase4-command-discovery-checkpoint.md`
+- `docs/activity-log-bundles.md`
+- `docs/live-run-strategy.md`
+- historical checkpoint notes now live under:
+  [phase2-secrets-config-resource-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase2-secrets-config-resource-checkpoint-2026-04-08.md)
+- historical checkpoint notes now live under:
+  [phase3-compute-apps-network-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase3-compute-apps-network-checkpoint-2026-04-08.md)
+- historical checkpoint notes now live under:
+  [phase4-command-discovery-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase4-command-discovery-checkpoint-2026-04-08.md)
 
 Current release boundary:
 
-- this repo is now aligned to AzureFox `1.1.0` / Phase 3.5 for release-gated validation
-- Phase 4 / `1.2.0` remains discovery-first here, except for `snapshots-disks`, which is now a
-  validator-backed proof surface
-- broader PostgreSQL relational parity is still tracked as an AzureFox main-repo follow-up rather
-  than being overstated in this lab release
+- this repo now targets AzureFox `1.2.0` / Phase 4 as the current parity boundary
+- deterministic lab-backed proof now includes `snapshots-disks`, `vmss`, and one Automation account
+- `lighthouse` and `cross-tenant` are validated as evidence-led tenant surfaces rather than fixed row-count proof
+- `devops` is validated conditionally: without `AZUREFOX_DEVOPS_ORG`, the validator expects the truthful missing-organization issue instead of pretending pipeline coverage exists
 
 ## Lab Shape
 
@@ -115,6 +125,7 @@ Current release boundary:
 - One AKS cluster with a public control-plane endpoint and system-assigned identity
 - One Azure Container Registry with public network access and admin user enabled
 - One Azure SQL server with one user database
+- One Azure Automation account with a system-assigned identity
 - One public DNS zone plus one private DNS zone with a registration-enabled VNet link
 - Three deployment-history objects:
   one succeeded subscription deployment with linked template URI
@@ -139,6 +150,7 @@ With this setup, AzureFox should surface:
 - Key Vault public-network, private-endpoint, and purge-protection posture from `keyvault`
 - public storage and open firewall findings from `storage`
 - a public VM with an attached identity from `vms`
+- one internal VM scale set footprint from `vmss`
 - NIC attachment and public-IP references from `nics`
 - public IP and Azure-managed hostname visibility from `endpoints`
 - NIC-backed public ingress evidence from `network-ports`
@@ -149,14 +161,13 @@ With this setup, AzureFox should surface:
 - AKS control-plane endpoint, agent-pool count, OIDC posture, and addon visibility from `aks`
 - ACR login-server, admin-user, webhook, replication, and policy posture from `acr`
 - Azure SQL endpoint, visible user-database inventory, and minimal TLS posture from `databases`
+- Azure Automation account identity and zero-object execution posture from `automation`
 - managed-disk attachment, network-access, and encryption posture from `snapshots-disks`
+- delegated-management evidence from `lighthouse` when the subscription exposes it
+- outside-tenant trust evidence from `cross-tenant` without turning ambient tenant posture into a deterministic row-count claim
+- Azure DevOps pipeline evidence from `devops` only when a real organization is configured
 - DNS zone inventory and private-endpoint-backed namespace usage from `dns`
-- identity checkpoint orchestration artifacts from `all-checks --section identity`
-- network checkpoint orchestration artifacts from `all-checks --section network`
-- compute checkpoint orchestration artifacts from `all-checks --section compute`
-- config checkpoint orchestration artifacts from `all-checks --section config`
-- secrets checkpoint orchestration artifacts from `all-checks --section secrets`
-- resource checkpoint orchestration artifacts from `all-checks --section resource`
+- optional grouped follow-up through AzureFox `chains` families when you want a higher-level review path in addition to the standalone proof artifacts
 
 `auth-policies` is handled a little differently in this repo:
 
@@ -301,7 +312,14 @@ By default the validator:
 - executes AzureFox from `--azurefox-dir`
 - runs in `--mode full`, which executes the current release-gated standalone AzureFox command set
 - prints progress lines before and after each AzureFox step, including elapsed time and target artifact directories
+- records per-command UTC start and finish timestamps plus elapsed duration in `command-timeline.json`
 - stores proof artifacts under `proof-artifacts/latest`
+
+For richer `devops` proof, point AzureFox at a real Azure DevOps organization before you run the validator:
+
+```bash
+export AZUREFOX_DEVOPS_ORG=<org-name>
+```
 
 Optional flags:
 
@@ -315,7 +333,6 @@ Useful scoped reruns:
 
 ```bash
 python3 scripts/validate_azurefox_lab.py --mode commands-only
-python3 scripts/validate_azurefox_lab.py --mode all-checks-only
 python3 scripts/validate_azurefox_lab.py --mode full
 python3 scripts/validate_azurefox_lab.py --mode full --skip-command role-trusts
 ```
@@ -323,30 +340,36 @@ python3 scripts/validate_azurefox_lab.py --mode full --skip-command role-trusts
 Runtime notes:
 
 - use `--mode full` as the single end-to-end validation run
-- `--mode full` no longer bundles `all-checks`; run `--mode all-checks-only` separately only when you intentionally want wrapper coverage
 - `commands-only` is now just an explicit standalone-only rerun alias for the same command family as `full`
 - if the live lab is already up and you only changed outputs or validator expectations, refresh the
   OpenTofu state before rerunning validation so stale `validation_manifest` data does not cause a
   false mismatch
 - use `--mode commands-only` when you want the individual command outputs without the orchestration pass
-- use `--mode all-checks-only` only when you are specifically validating the section wrapper and artifact emission path in isolation
-- do not treat `all-checks-only` as part of the default release-validation sequence unless we explicitly decide the wrapper coverage is required
 - `role-trusts` can take several minutes because the Azure API path is slow; the validator now emits periodic wait lines during that step instead of appearing hung
 - after `role-trusts` has been validated once for the current phase, reruns can use `--skip-command role-trusts` unless you changed that slice or hit a blocker that points back to it
+- Key Vault replacement during `tofu apply` can spend several minutes in Azure soft-delete before recreate completes; treat that as a known slow path rather than a surprise hang
 - more generally, do not rerun a known slow validation path by default; only pay that cost again
   when the changed slice touches it, a live blocker points back to it, or the team explicitly wants
   the extra proof
+- use [docs/live-run-strategy.md](/Users/cfarley/Documents/Terraform Labs for AzureFox/docs/live-run-strategy.md) as the standing rule set for full passes versus fast reruns
 
 Artifacts include:
 
 - one JSON payload per AzureFox command
 - copied loot files emitted by AzureFox
-- `all-checks --section <section>` output plus `run-summary.json` for `identity`, `network`, `compute`, `config`, `secrets`, and `resource`
+- `command-timeline.json`
 - `summary.json`
 - `summary.txt`
 - `azurefox-mismatch-report.md`
 - `identity-mismatch-report.md`
 - `azurefox-follow-up-items.md`
+
+Optional SOC / detection artifact flow:
+
+- `command-timeline.json` now records UTC start and finish markers plus duration for each AzureFox validation command so analysts can correlate those markers against Azure control-plane activity
+- this timestamp artifact only covers the validator command lane; keep recording `apply` and `destroy` timestamps separately when you want the full lab window in the bundle
+- use [docs/activity-log-bundles.md](/Users/cfarley/Documents/Terraform Labs for AzureFox/docs/activity-log-bundles.md) to pull Azure Activity Log locally for the full lab window and package it with phase markers plus validator command markers
+- the bundle script is [export_activity_log_bundle.py](/Users/cfarley/Documents/Terraform Labs for AzureFox/scripts/export_activity_log_bundle.py)
 
 ## Evidence Boundaries
 
@@ -364,8 +387,9 @@ What AzureFox can verify directly from read-only control-plane and Graph data:
 - that managed-identity token surfaces correlate across web workloads, VMs, and deployment history
 - that Azure-managed App Service and Function App hostnames are visible control-plane endpoint paths, not proven live ingress
 - that NIC-backed public ingress evidence comes from visible NSG allow rules rather than guessed reachability
-- that storage, API Management, AKS, ACR, and Azure SQL depth stays evidence-based when only management metadata is visible
+- that storage, VMSS, Automation, API Management, AKS, ACR, and Azure SQL depth stays evidence-based when only management metadata is visible
 - that the current DNS boundary stays at zone inventory and private-endpoint-backed namespace usage rather than record export or live resolution proof
+- that `lighthouse`, `cross-tenant`, and `devops` stay honest about external prerequisites, tenant shape, or partial-read boundaries
 
 What only the lab can confirm once infrastructure exists and the validator has been run:
 

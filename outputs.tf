@@ -109,7 +109,6 @@ output "validation_manifest" {
       validation_mode = "non-invasive"
     }
     identity_checkpoint = {
-      all_checks_section = "identity"
       commands = [
         "whoami",
         "rbac",
@@ -120,19 +119,21 @@ output "validation_manifest" {
         "auth-policies",
         "managed-identities",
       ]
+      grouped_follow_up = [
+        "chains credential-path",
+        "chains escalation-path",
+      ]
     }
     phase2_checkpoint = {
-      all_checks_sections = [
-        "config",
-        "secrets",
-        "resource",
-      ]
       commands = [
         "keyvault",
         "resource-trusts",
         "arm-deployments",
         "env-vars",
         "tokens-credentials",
+      ]
+      grouped_follow_up = [
+        "chains deployment-path",
       ]
       key_vaults = {
         open = {
@@ -263,11 +264,6 @@ output "validation_manifest" {
       }
     }
     phase3_checkpoint = {
-      all_checks_sections = [
-        "network",
-        "compute",
-        "resource",
-      ]
       commands = [
         "storage",
         "nics",
@@ -281,6 +277,10 @@ output "validation_manifest" {
         "aks",
         "acr",
         "databases",
+        "vmss",
+      ]
+      grouped_follow_up = [
+        "chains deployment-path",
       ]
       storage = {
         public = {
@@ -464,6 +464,17 @@ output "validation_manifest" {
           user_database_names         = [azurerm_mssql_database.phase3.name]
         }
       }
+      vmss = {
+        api = {
+          identity_type                 = null
+          instance_count                = 1
+          name                          = azurerm_linux_virtual_machine_scale_set.vmss_api.name
+          nic_configuration_count       = 1
+          public_ip_configuration_count = 0
+          sku_name                      = var.vmss_sku
+          subnet_id                     = azurerm_subnet.workload.id
+        }
+      }
       dns = {
         public_zone = {
           name      = azurerm_dns_zone.phase3_public.name
@@ -491,13 +502,42 @@ output "validation_manifest" {
         "Azure-managed hostnames in endpoints and workloads are visibility proof, not proven live ingress reachability.",
         "network-ports remains narrow NIC-backed public endpoint evidence and does not prove full effective-network reachability.",
         "Current DNS validation in this lab stays at namespace-usage metadata and private-endpoint reference counts because the current read path did not expose stable record totals, delegation details, or VNet-link counters.",
-        "The live ACR run did not consistently surface public-network or managed-identity posture even though the lab deployment enables both, so the validator avoids overclaiming those fields until the AzureFox read path is clarified.",
+        "If a live rerun against the current AzureFox checkout still omits ACR public-network or managed-identity posture, keep the validator conservative instead of overclaiming fields the read path does not return consistently.",
       ]
     }
     phase4_checkpoint = {
       commands = [
+        "automation",
+        "devops",
+        "lighthouse",
+        "cross-tenant",
         "snapshots-disks",
       ]
+      automation = {
+        ops = {
+          certificate_count         = 0
+          connection_count          = 0
+          credential_count          = 0
+          encrypted_variable_count  = 0
+          hybrid_worker_group_count = 0
+          identity_type             = null
+          job_schedule_count        = 0
+          name                      = azurerm_automation_account.phase4.name
+          runbook_count             = 0
+          schedule_count            = 0
+          variable_count            = 0
+          webhook_count             = 0
+        }
+      }
+      devops = {
+        expect_unconfigured_issue_without_org = true
+      }
+      lighthouse = {
+        validation_mode = "evidence-led"
+      }
+      cross_tenant = {
+        validation_mode = "evidence-led"
+      }
       snapshots_disks = {
         vm_web_os_disk = {
           attached_to_name      = azurerm_linux_virtual_machine.vm_web.name
@@ -509,48 +549,20 @@ output "validation_manifest" {
         }
       }
       known_gaps = [
-        "cross-tenant remains tenant- and permission-dependent, so it is useful live evidence but not yet a deterministic release-gated validator target.",
-        "lighthouse, automation, and devops remain discovery-only until the lab intentionally adds stable proof objects or required operator configuration.",
+        "cross-tenant remains tenant- and permission-dependent, so the lab keeps it evidence-led rather than row-count gated.",
+        "lighthouse remains subscription- and tenant-shaped; promote stronger assertions only if the lab intentionally adds delegated-management proof.",
+        "devops needs a real Azure DevOps organization, project, and pipeline path before it can move past conditional validation of command behavior and truthful issue surfacing.",
+        "automation currently validates the visible zero-object execution posture, but the current AzureFox read path did not return a managed-identity type for the lab-owned Automation account during the April 8, 2026 live pass.",
       ]
     }
-    all_checks_sections = {
-      identity = [
-        "whoami",
-        "rbac",
-        "principals",
-        "permissions",
-        "privesc",
-        "role-trusts",
-        "auth-policies",
-        "managed-identities",
+    grouped_follow_up = {
+      command = "chains"
+      implemented_families = [
+        "credential-path",
+        "deployment-path",
+        "escalation-path",
       ]
-      config = [
-        "arm-deployments",
-        "env-vars",
-      ]
-      secrets = [
-        "keyvault",
-        "tokens-credentials",
-      ]
-      resource = [
-        "resource-trusts",
-        "api-mgmt",
-        "acr",
-        "databases",
-      ]
-      network = [
-        "nics",
-        "dns",
-        "endpoints",
-        "network-ports",
-      ]
-      compute = [
-        "workloads",
-        "app-services",
-        "functions",
-        "aks",
-        "vms",
-      ]
+      validation_mode = "optional-follow-up"
     }
     resource_groups = {
       network  = azurerm_resource_group.network.name

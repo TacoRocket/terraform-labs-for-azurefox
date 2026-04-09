@@ -10,16 +10,48 @@ stored in `VERSION`.
 
 ## [Unreleased]
 
-No unreleased entries yet.
+### Changed
+
+- retired the removed AzureFox `all-checks` path from the lab validator and current operator docs
+  so live runs no longer assume a grouped command that AzureFox `main` rejects as of April 8, 2026
+- documented an explicit live-run strategy for known slow paths, including Key Vault soft-delete
+  waits during OpenTofu apply and `role-trusts` latency during AzureFox validation
+- added a lab-side Azure Activity Log bundle script and doc so SOC-style local log pulls can be
+  packaged with run-window phase markers without introducing a separate Azure logging backend
+- added validator-emitted `command-timeline.json` artifacts plus bundle-export support so SOC
+  analysts can line AzureFox command start and finish times up with raw Azure Activity Log windows
+
+## [1.2.0] - 2026-04-05
+
+### Added
+
+- one Azure Automation account with a system-assigned identity so the lab now owns a deterministic
+  Phase 4 `automation` proof surface instead of only validating zero-account execution
+
+### Changed
+
+- promoted `automation`, `devops`, `lighthouse`, and `cross-tenant` into the standalone validator
+  path with truth-preserving checks that distinguish deterministic proof from tenant-shaped or
+  external-config-shaped command behavior
+- promoted `vmss` into the standalone validator path because the current lab already deploys a
+  stable internal VM scale set that AzureFox can read deterministically
+- expanded `all-checks` validator coverage to include the current `storage` section and the newer
+  `lighthouse`, `automation`, `devops`, `vmss`, and `snapshots-disks` command membership reflected
+  in the main AzureFox repo
+- updated repo docs and release language to target AzureFox `1.2.0` / Phase 4 parity instead of
+  leaving Phase 4 described as mostly discovery-only work
+- tightened the documented truth boundary for external or tenant-shaped surfaces:
+  `cross-tenant` and `lighthouse` stay evidence-led, while `devops` requires a real Azure DevOps
+  organization for pipeline proof and otherwise should surface the expected configuration issue
 
 ## [1.1.0] - 2026-04-05
 
 ### Added
 
 - Phase 3.5 checkpoint note for the AzureFox `1.1.0` release boundary:
-  `docs/phase3-compute-apps-network-checkpoint.md`
+  [phase3-compute-apps-network-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase3-compute-apps-network-checkpoint-2026-04-08.md)
 - Phase 4 live-capture note for the AzureFox `1.2.0` command lane:
-  `docs/phase4-command-discovery-checkpoint.md`
+  [phase4-command-discovery-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase4-command-discovery-checkpoint-2026-04-08.md)
 
 ### Changed
 
