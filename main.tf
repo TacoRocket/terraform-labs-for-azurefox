@@ -34,6 +34,7 @@ locals {
   phase3_sql_admin_password      = "AzFox!${substr(local.unique_suffix, 0, 4)}${substr(local.unique_suffix, 4, 4)}"
   phase3_public_dns_zone_name    = "af-${substr(local.unique_suffix, 0, 6)}.example.net"
   phase3_private_dns_zone_name   = "azurefox-${substr(local.unique_suffix, 0, 6)}.internal"
+  phase4_automation_name         = "aa-ops-${substr(local.unique_suffix, 0, 6)}"
   phase2_sub_template_hash       = substr(filemd5("${path.module}/scripts/arm-templates/sub-foundation.json"), 0, 8)
   phase2_rg_parameters_hash      = substr(filemd5("${path.module}/scripts/arm-templates/kv-secrets.parameters.json"), 0, 8)
   phase2_sub_template_blob_name  = "templates/sub-foundation-${local.phase2_sub_template_hash}.json"
@@ -82,6 +83,18 @@ resource "azurerm_resource_group" "ops" {
   name     = local.resource_groups.ops
   location = var.location
   tags     = local.tags
+}
+
+resource "azurerm_automation_account" "phase4" {
+  name                = local.phase4_automation_name
+  location            = azurerm_resource_group.ops.location
+  resource_group_name = azurerm_resource_group.ops.name
+  sku_name            = "Basic"
+  tags                = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 resource "azurerm_virtual_network" "lab" {

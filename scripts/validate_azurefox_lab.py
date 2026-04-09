@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,8 @@ from typing import Any
 COMMANDS = [
     "whoami",
     "inventory",
+    "automation",
+    "devops",
     "arm-deployments",
     "env-vars",
     "tokens-credentials",
@@ -21,12 +24,16 @@ COMMANDS = [
     "principals",
     "permissions",
     "privesc",
+    "role-trusts",
+    "lighthouse",
+    "cross-tenant",
     "resource-trusts",
     "auth-policies",
     "managed-identities",
     "keyvault",
     "storage",
     "vms",
+    "vmss",
     "nics",
     "dns",
     "endpoints",
@@ -39,16 +46,6 @@ COMMANDS = [
     "acr",
     "databases",
     "snapshots-disks",
-    "role-trusts",
-]
-
-ALL_CHECK_SECTION_ORDER = [
-    "config",
-    "secrets",
-    "resource",
-    "network",
-    "compute",
-    "identity",
 ]
 
 AUTH_POLICY_FINDINGS = {
@@ -58,7 +55,7 @@ AUTH_POLICY_FINDINGS = {
     "users-can-register-apps": "auth-policy-users-can-register-apps",
 }
 
-RUN_MODE_CHOICES = ("full", "commands-only", "all-checks-only")
+RUN_MODE_CHOICES = ("full", "commands-only")
 HEARTBEAT_INTERVAL_SECONDS = 30
 SLOW_COMMAND_NOTES = {
     "role-trusts": (
@@ -104,8 +101,7 @@ def parse_args() -> argparse.Namespace:
         default="full",
         help=(
             "Validation scope to run: full executes the release-gated standalone command set; "
-            "commands-only is an explicit standalone-only rerun mode; "
-            "all-checks-only skips standalone commands and runs section wrappers only."
+            "commands-only is an explicit standalone-only rerun mode."
         ),
     )
     parser.add_argument(
@@ -119,6 +115,10 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def utc_timestamp() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def run_json(
@@ -163,25 +163,8 @@ def log_progress(message: str) -> None:
     print(message, flush=True)
 
 
-def ordered_all_checks_sections(sections: list[str]) -> list[str]:
-    preferred_positions = {
-        section: index for index, section in enumerate(ALL_CHECK_SECTION_ORDER)
-    }
-    return sorted(
-        sections,
-        key=lambda section: (
-            preferred_positions.get(section, len(ALL_CHECK_SECTION_ORDER)),
-            section,
-        ),
-    )
-
-
 def mode_runs_commands(mode: str) -> bool:
     return mode in {"full", "commands-only"}
-
-
-def mode_runs_all_checks(mode: str) -> bool:
-    return mode == "all-checks-only"
 
 
 def selected_commands(skipped_commands: set[str]) -> list[str]:
@@ -205,6 +188,33 @@ def read_manifest(lab_dir: Path) -> dict[str, Any]:
     return value
 
 
+def write_command_timeline(
+    artifacts_dir: Path,
+    *,
+    mode: str,
+    subscription_id: str,
+    commands: list[str],
+    skipped_commands: set[str],
+    started_at_utc: str,
+    command_runs: list[dict[str, Any]],
+    finished_at_utc: str | None = None,
+) -> None:
+    payload = {
+        "mode": mode,
+        "subscription_id": subscription_id,
+        "validator_started_at_utc": started_at_utc,
+        "validator_finished_at_utc": finished_at_utc,
+        "requested_commands": commands,
+        "skipped_commands": sorted(skipped_commands),
+        "command_count": len(command_runs),
+        "command_runs": command_runs,
+    }
+    (artifacts_dir / "command-timeline.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def run_azurefox(
     azurefox_dir: Path,
     python_bin: str,
@@ -212,15 +222,24 @@ def run_azurefox(
     artifacts_dir: Path,
     mode: str,
     commands: list[str],
-    all_checks_sections: list[str],
-) -> tuple[dict[str, Any], dict[str, Path], dict[str, Any], dict[str, Path]]:
+    skipped_commands: set[str],
+) -> tuple[dict[str, Any], dict[str, Path]]:
     outputs: dict[str, Any] = {}
     loot_paths: dict[str, Path] = {}
-    run_summaries: dict[str, Any] = {}
-    run_summary_paths: dict[str, Path] = {}
     env = os.environ.copy()
     pythonpath = str(azurefox_dir / "src")
     env["PYTHONPATH"] = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else pythonpath
+    validator_started_at_utc = utc_timestamp()
+    command_runs: list[dict[str, Any]] = []
+    write_command_timeline(
+        artifacts_dir,
+        mode=mode,
+        subscription_id=subscription_id,
+        commands=commands,
+        skipped_commands=skipped_commands,
+        started_at_utc=validator_started_at_utc,
+        command_runs=command_runs,
+    )
 
     if mode_runs_commands(mode):
         loot_root = artifacts_dir / "loot"
@@ -228,6 +247,7 @@ def run_azurefox(
         command_total = len(commands)
         for index, command in enumerate(commands, start=1):
             step_started = time.monotonic()
+            command_started_at_utc = utc_timestamp()
             outdir = artifacts_dir / command
             outdir.mkdir(parents=True, exist_ok=True)
             log_progress(
@@ -236,23 +256,47 @@ def run_azurefox(
             slow_note = SLOW_COMMAND_NOTES.get(command)
             if slow_note:
                 log_progress(f"[note {index}/{command_total}] azurefox {command}: {slow_note}")
-            payload = run_json(
-                [
-                    python_bin,
-                    "-m",
-                    "azurefox",
-                    "--subscription",
-                    subscription_id,
-                    "--output",
-                    "json",
-                    "--outdir",
-                    str(outdir),
-                    command,
-                ],
-                cwd=azurefox_dir,
-                env=env,
-                progress_label=f"azurefox {command}",
-            )
+            try:
+                payload = run_json(
+                    [
+                        python_bin,
+                        "-m",
+                        "azurefox",
+                        "--subscription",
+                        subscription_id,
+                        "--output",
+                        "json",
+                        "--outdir",
+                        str(outdir),
+                        command,
+                    ],
+                    cwd=azurefox_dir,
+                    env=env,
+                    progress_label=f"azurefox {command}",
+                )
+            except Exception as exc:
+                command_runs.append(
+                    {
+                        "artifacts_dir": str(outdir),
+                        "command": command,
+                        "duration_seconds": round(time.monotonic() - step_started, 3),
+                        "error": str(exc),
+                        "finished_at_utc": utc_timestamp(),
+                        "sequence": index,
+                        "started_at_utc": command_started_at_utc,
+                        "status": "failed",
+                    }
+                )
+                write_command_timeline(
+                    artifacts_dir,
+                    mode=mode,
+                    subscription_id=subscription_id,
+                    commands=commands,
+                    skipped_commands=skipped_commands,
+                    started_at_utc=validator_started_at_utc,
+                    command_runs=command_runs,
+                )
+                raise
             outputs[command] = payload
             (artifacts_dir / f"{command}.json").write_text(
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -264,57 +308,44 @@ def run_azurefox(
             target = loot_root / f"{command}.json"
             target.write_text(emitted_loot.read_text(encoding="utf-8"), encoding="utf-8")
             loot_paths[command] = target
+            command_runs.append(
+                {
+                    "artifacts_dir": str(outdir),
+                    "command": command,
+                    "duration_seconds": round(time.monotonic() - step_started, 3),
+                    "finished_at_utc": utc_timestamp(),
+                    "loot_path": str(target),
+                    "payload_path": str(artifacts_dir / f"{command}.json"),
+                    "sequence": index,
+                    "started_at_utc": command_started_at_utc,
+                    "status": "succeeded",
+                }
+            )
+            write_command_timeline(
+                artifacts_dir,
+                mode=mode,
+                subscription_id=subscription_id,
+                commands=commands,
+                skipped_commands=skipped_commands,
+                started_at_utc=validator_started_at_utc,
+                command_runs=command_runs,
+            )
             log_progress(
                 f"[done {index}/{command_total}] azurefox {command} "
                 f"({time.monotonic() - step_started:.1f}s)"
             )
 
-    if mode_runs_all_checks(mode):
-        section_total = len(all_checks_sections)
-        for index, section in enumerate(all_checks_sections, start=1):
-            step_started = time.monotonic()
-            checkpoint_dir = artifacts_dir / f"{section}-checkpoint"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            log_progress(
-                f"[run {index}/{section_total}] azurefox all-checks --section {section} "
-                f"-> {checkpoint_dir}"
-            )
-            run_summary = run_json(
-                [
-                    python_bin,
-                    "-m",
-                    "azurefox",
-                    "--subscription",
-                    subscription_id,
-                    "--output",
-                    "json",
-                    "--outdir",
-                    str(checkpoint_dir),
-                    "all-checks",
-                    "--section",
-                    section,
-                ],
-                cwd=azurefox_dir,
-                env=env,
-                progress_label=f"azurefox all-checks --section {section}",
-            )
-            run_summary_path = checkpoint_dir / "run-summary.json"
-            if not run_summary_path.exists():
-                raise AssertionError(
-                    f"AzureFox did not emit {section}-checkpoint/run-summary.json"
-                )
-            (artifacts_dir / f"all-checks-{section}.json").write_text(
-                json.dumps(run_summary, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            run_summaries[section] = run_summary
-            run_summary_paths[section] = run_summary_path
-            log_progress(
-                f"[done {index}/{section_total}] azurefox all-checks --section {section} "
-                f"({time.monotonic() - step_started:.1f}s)"
-            )
-
-    return outputs, loot_paths, run_summaries, run_summary_paths
+    write_command_timeline(
+        artifacts_dir,
+        mode=mode,
+        subscription_id=subscription_id,
+        commands=commands,
+        skipped_commands=skipped_commands,
+        started_at_utc=validator_started_at_utc,
+        command_runs=command_runs,
+        finished_at_utc=utc_timestamp(),
+    )
+    return outputs, loot_paths
 
 
 def assert_true(condition: bool, message: str) -> None:
@@ -377,6 +408,13 @@ def find_vm(payload: dict[str, Any], vm_name: str) -> dict[str, Any]:
     raise AssertionError(f"VM asset '{vm_name}' not found in vms output")
 
 
+def find_vmss_asset(payload: dict[str, Any], vmss_name: str) -> dict[str, Any]:
+    for asset in payload.get("vmss_assets", []):
+        if asset.get("name") == vmss_name:
+            return asset
+    raise AssertionError(f"vmss output missing asset '{vmss_name}'")
+
+
 def find_nic(payload: dict[str, Any], nic_name: str) -> dict[str, Any]:
     for asset in payload.get("nic_assets", []):
         if asset.get("name") == nic_name:
@@ -431,6 +469,13 @@ def find_app_service(payload: dict[str, Any], name: str) -> dict[str, Any]:
         if asset.get("name") == name:
             return asset
     raise AssertionError(f"app-services output missing asset '{name}'")
+
+
+def find_automation_account(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("automation_accounts", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"automation output missing account '{name}'")
 
 
 def find_function_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
@@ -578,8 +623,6 @@ def validate_outputs(
     loot_paths: dict[str, Path],
     executed_commands: list[str],
     skipped_commands: set[str],
-    run_summaries: dict[str, Any],
-    run_summary_paths: dict[str, Path],
 ) -> tuple[list[str], list[str], list[str]]:
     checks: list[str] = []
     mismatches: list[str] = []
@@ -744,6 +787,33 @@ def validate_outputs(
         elif "role-trusts" in skipped_commands:
             checks.append("role-trusts was intentionally skipped on this rerun after an earlier baseline validation")
 
+        lighthouse = outputs["lighthouse"]
+        assert_true(
+            isinstance(lighthouse.get("lighthouse_delegations", []), list),
+            "lighthouse did not return a lighthouse_delegations list",
+        )
+        assert_true(
+            not lighthouse.get("issues"),
+            "lighthouse reported unexpected collection issues",
+        )
+        checks.append("lighthouse completed cleanly and kept delegated-management evidence explicit without requiring the lab to invent a second tenant")
+
+        cross_tenant = outputs["cross-tenant"]
+        assert_true(
+            isinstance(cross_tenant.get("cross_tenant_paths", []), list),
+            "cross-tenant did not return a cross_tenant_paths list",
+        )
+        unexpected_cross_tenant_issues = [
+            issue
+            for issue in cross_tenant.get("issues", [])
+            if (issue.get("context") or {}).get("collector") != "auth_policies.security_defaults"
+        ]
+        assert_true(
+            not unexpected_cross_tenant_issues,
+            "cross-tenant reported unexpected issues outside the known Graph partial-read boundary",
+        )
+        checks.append("cross-tenant completed and kept outside-tenant evidence tenant-shaped instead of pretending it was a deterministic lab census")
+
         auth_policies = outputs["auth-policies"]
         assert_true(
             manifest["auth_policies"]["validation_mode"] == "non-invasive",
@@ -790,8 +860,88 @@ def validate_outputs(
             follow_ups.append(
                 "Keep auth-policies wording evidence-based when security defaults or Conditional Access "
                 "surfaces are partially unreadable; partial visibility should remain explicit."
-            )
+        )
         checks.append("auth-policies stayed in metadata-validation mode and handled partial Graph visibility explicitly")
+
+        automation = outputs["automation"]
+        expected_automation = phase4_manifest.get("automation", {}).get("ops")
+        if expected_automation:
+            automation_account = find_automation_account(automation, expected_automation["name"])
+            expected_identity = expected_automation["identity_type"]
+            visible_identity = automation_account.get("identity_type")
+            if expected_identity is None:
+                assert_true(
+                    visible_identity is None,
+                    "automation account identity type mismatch",
+                )
+            elif visible_identity != expected_identity:
+                mismatches.append(
+                    "automation did not return the expected managed-identity type for the lab-owned "
+                    f"Automation account; expected {expected_identity!r}, got {visible_identity!r}."
+                )
+                follow_ups.append(
+                    "Keep automation identity wording evidence-based until AzureFox reliably surfaces "
+                    "managed-identity type for Automation accounts in the live read path."
+                )
+            for field_name in (
+                "runbook_count",
+                "schedule_count",
+                "job_schedule_count",
+                "webhook_count",
+                "hybrid_worker_group_count",
+                "credential_count",
+                "certificate_count",
+                "connection_count",
+                "variable_count",
+                "encrypted_variable_count",
+            ):
+                assert_true(
+                    automation_account.get(field_name) == expected_automation[field_name],
+                    f"automation account {field_name} mismatch",
+                )
+            if visible_identity:
+                checks.append(
+                    "automation surfaced the lab-owned Automation account with the expected visible identity and zero-object execution posture"
+                )
+            else:
+                checks.append(
+                    "automation surfaced the lab-owned Automation account and matched the current visible zero-object execution posture even though the current read path did not return an identity type"
+                )
+
+        devops = outputs["devops"]
+        devops_config_issue = next(
+            (
+                issue
+                for issue in devops.get("issues", [])
+                if (issue.get("context") or {}).get("collector") == "devops"
+            ),
+            None,
+        )
+        devops_organization = (devops.get("metadata") or {}).get("devops_organization")
+        if devops_organization:
+            assert_true(
+                devops_config_issue is None,
+                "devops unexpectedly reported an organization-configuration issue despite metadata.devops_organization",
+            )
+            assert_true(
+                isinstance(devops.get("pipelines", []), list),
+                "devops did not return a pipelines list",
+            )
+            checks.append(
+                "devops used the configured Azure DevOps organization and returned pipeline evidence without a configuration error"
+            )
+        else:
+            assert_true(
+                devops_config_issue is not None,
+                "devops did not record the expected Azure DevOps organization configuration issue",
+            )
+            assert_true(
+                "not configured" in str(devops_config_issue.get("message", "")).lower(),
+                "devops missing-organization issue message drifted unexpectedly",
+            )
+            checks.append(
+                "devops stayed truthful about the missing Azure DevOps organization instead of pretending pipeline coverage existed"
+            )
 
         managed_identities = outputs["managed-identities"]
         identity = find_identity(managed_identities, identity_name)
@@ -918,6 +1068,35 @@ def validate_outputs(
             "vms output missing public workload with identity finding",
         )
         checks.append("vms reported the public VM and attached identity without overstating VMSS coverage")
+
+        vmss = outputs["vmss"]
+        expected_vmss = phase3_manifest["vmss"]["api"]
+        vmss_asset = find_vmss_asset(vmss, expected_vmss["name"])
+        assert_true(
+            vmss_asset.get("sku_name") == expected_vmss["sku_name"],
+            "vmss SKU mismatch",
+        )
+        assert_true(
+            vmss_asset.get("instance_count") == expected_vmss["instance_count"],
+            "vmss instance count mismatch",
+        )
+        assert_true(
+            vmss_asset.get("identity_type") == expected_vmss["identity_type"],
+            "vmss identity type mismatch",
+        )
+        assert_true(
+            vmss_asset.get("nic_configuration_count") == expected_vmss["nic_configuration_count"],
+            "vmss NIC configuration count mismatch",
+        )
+        assert_true(
+            vmss_asset.get("public_ip_configuration_count") == expected_vmss["public_ip_configuration_count"],
+            "vmss public IP configuration count mismatch",
+        )
+        assert_true(
+            expected_vmss["subnet_id"] in set(vmss_asset.get("subnet_ids", [])),
+            "vmss subnet reference mismatch",
+        )
+        checks.append("vmss surfaced the internal scale-set footprint and network placement without inventing public-frontend exposure")
 
         nics = outputs["nics"]
         vm_primary_nic = phase3_manifest["nics"]["vm_primary"]
@@ -1521,31 +1700,6 @@ def validate_outputs(
             assert_true(loot_paths.get(command, Path()).exists(), f"{command} loot artifact missing")
         checks.append("all single-command runs returned JSON payloads and emitted loot artifacts")
 
-    if mode_runs_all_checks(mode):
-        for section, expected_commands in manifest["all_checks_sections"].items():
-            run_summary = run_summaries[section]
-            run_summary_path = run_summary_paths[section]
-            assert_true(run_summary["metadata"]["command"] == "all-checks", f"{section} run-summary command mismatch")
-            assert_true(run_summary.get("section") == section, f"{section} run-summary section mismatch")
-            result_map = {item.get("command"): item for item in run_summary.get("results", [])}
-            assert_true(
-                set(expected_commands).issubset(result_map),
-                f"{section} run-summary missing expected commands",
-            )
-            for command in expected_commands:
-                result = result_map[command]
-                assert_true(result.get("status") == "ok", f"{section} run-summary reported non-ok status for {command}")
-                artifact_paths = result.get("artifact_paths") or {}
-                for label, path in artifact_paths.items():
-                    assert_true(
-                        path and Path(path).exists(),
-                        f"{section} run-summary missing {label} artifact for {command}",
-                    )
-            assert_true(run_summary_path.exists(), f"{section} run-summary.json path is missing on disk")
-        checks.append(
-            "all-checks emitted complete artifact sets for identity, network, compute, config, secrets, and resource sections"
-        )
-
     return checks, mismatches, follow_ups
 
 
@@ -1555,16 +1709,12 @@ def write_summary(
     checks: list[str],
     mismatches: list[str],
     follow_ups: list[str],
-    run_summary_paths: dict[str, Path],
 ) -> None:
     summary = {
         "checks": checks,
         "follow_ups": follow_ups,
         "mismatches": mismatches,
         "mode": mode,
-        "run_summary_paths": {
-            section: str(path) for section, path in sorted(run_summary_paths.items())
-        },
         "status": "pass",
     }
     (artifacts_dir / "summary.json").write_text(
@@ -1642,18 +1792,15 @@ def main() -> int:
     if skipped_commands:
         log_progress(f"[info] skipped standalone commands: {', '.join(sorted(skipped_commands))}")
     manifest = read_manifest(lab_dir)
-    all_checks_sections = ordered_all_checks_sections(
-        list(manifest["all_checks_sections"].keys())
-    )
     commands = selected_commands(skipped_commands)
-    outputs, loot_paths, run_summaries, run_summary_paths = run_azurefox(
+    outputs, loot_paths = run_azurefox(
         azurefox_dir=azurefox_dir,
         python_bin=args.python,
         subscription_id=manifest["subscription_id"],
         artifacts_dir=artifacts_dir,
         mode=args.mode,
         commands=commands,
-        all_checks_sections=all_checks_sections,
+        skipped_commands=skipped_commands,
     )
     checks, mismatches, follow_ups = validate_outputs(
         manifest,
@@ -1662,10 +1809,8 @@ def main() -> int:
         loot_paths,
         commands,
         skipped_commands,
-        run_summaries,
-        run_summary_paths,
     )
-    write_summary(artifacts_dir, args.mode, checks, mismatches, follow_ups, run_summary_paths)
+    write_summary(artifacts_dir, args.mode, checks, mismatches, follow_ups)
     print(f"Validation complete. Artifacts written to {artifacts_dir}")
     return 0
 

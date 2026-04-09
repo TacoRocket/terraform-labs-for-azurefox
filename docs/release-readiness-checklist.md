@@ -26,17 +26,23 @@ Use this before tagging a lab release candidate.
 
 - `validation_manifest` still matches the OpenTofu-produced lab shape.
 - `scripts/validate_azurefox_lab.py` still validates the intended AzureFox command set.
-- `--mode full`, `--mode commands-only`, and `--mode all-checks-only` all behave as documented.
+- `--mode full` and `--mode commands-only` both behave as documented.
 - `--mode full` remains the single end-to-end validation gate for release readiness.
-- `--mode commands-only` is only an explicit standalone rerun alias, while `--mode all-checks-only` stays a separate wrapper-check path rather than part of the default release gate.
+- `--mode commands-only` is only an explicit standalone rerun alias rather than a separate release gate.
 - proof artifacts are written deterministically enough for operator review.
 - mismatch and follow-up reports stay evidence-based instead of normalizing live drift.
+- tenant-shaped or external-config-shaped commands stay honest about their limits:
+  `cross-tenant` and `lighthouse` remain evidence-led, while `devops` either uses a real Azure DevOps organization or records the expected missing-organization issue clearly.
+- the docs do not claim current AzureFox still supports `all-checks`; grouped follow-up is described truthfully through `chains` instead.
 
 ## Live Run Readiness
 
 - `tofu init`, `tofu plan`, and `tofu apply` succeed in a disposable subscription.
 - `python3 scripts/validate_azurefox_lab.py --mode full` completes successfully against the applied
   environment.
+- the operator followed [live-run-strategy.md](/Users/cfarley/Documents/Terraform Labs for AzureFox/docs/live-run-strategy.md)
+  so Key Vault replacement and `role-trusts` waits were treated as known slow paths instead of ad
+  hoc failures.
 - proof artifacts were reviewed after the live run and do not show unexplained drift.
 - `tofu destroy` succeeds cleanly after validation.
 - Azure API checks confirm that tagged lab resource groups and resources are actually gone after
