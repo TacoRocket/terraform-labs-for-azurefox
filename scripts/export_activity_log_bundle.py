@@ -201,9 +201,19 @@ def parse_timestamp(value: str) -> datetime | None:
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def phase_marker_sort_key(name: str, value: str) -> tuple[int, datetime | str, str]:
+    parsed = parse_timestamp(value)
+    if parsed is not None:
+        return (0, parsed, name)
+    return (1, value, name)
 
 
 def build_timeline(
@@ -234,7 +244,7 @@ def build_timeline(
             continue
         if key.endswith("_utc") and isinstance(value, str):
             marker_items.append((key.removesuffix("_utc"), value))
-    marker_items.sort(key=lambda item: (parse_timestamp(item[1]) or datetime.max, item[0]))
+    marker_items.sort(key=lambda item: phase_marker_sort_key(item[0], item[1]))
 
     if marker_items:
         for name, value in marker_items:

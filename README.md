@@ -83,12 +83,9 @@ Current checkpoint notes:
 
 - `docs/activity-log-bundles.md`
 - `docs/live-run-strategy.md`
-- historical checkpoint notes now live under:
-  [phase2-secrets-config-resource-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase2-secrets-config-resource-checkpoint-2026-04-08.md)
-- historical checkpoint notes now live under:
-  [phase3-compute-apps-network-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase3-compute-apps-network-checkpoint-2026-04-08.md)
-- historical checkpoint notes now live under:
-  [phase4-command-discovery-checkpoint-2026-04-08.md](/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase4-command-discovery-checkpoint-2026-04-08.md)
+- `docs/phase2-secrets-config-resource-checkpoint.md`
+- `docs/phase3-compute-apps-network-checkpoint.md`
+- `docs/phase4-command-discovery-checkpoint.md`
 
 Current release boundary:
 
