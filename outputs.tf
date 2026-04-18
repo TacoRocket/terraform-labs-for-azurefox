@@ -582,6 +582,26 @@ output "validation_manifest" {
       }
       devops = {
         expect_unconfigured_issue_without_org = true
+        expected_service_connection_name      = "af-rg-reader"
+        expected_variable_group_name          = "af-proof-lab-vars"
+        pipelines = {
+          root_yaml = {
+            name                  = "lab-proof"
+            expect_variable_group = true
+            expect_named_target   = false
+          }
+          template_follow = {
+            name                  = "lab-proof-template"
+            expect_variable_group = true
+            expect_named_target   = false
+          }
+          named_target = {
+            name                  = "lab-proof-targeted"
+            expect_variable_group = false
+            expect_named_target   = true
+            expected_target_clue  = "App Service: ${azurerm_linux_web_app.phase2_public.name}"
+          }
+        }
       }
       lighthouse = {
         validation_mode = "evidence-led"
@@ -602,7 +622,7 @@ output "validation_manifest" {
       known_gaps = [
         "cross-tenant remains tenant- and permission-dependent, so the lab keeps it evidence-led rather than row-count gated.",
         "lighthouse remains subscription- and tenant-shaped; promote stronger assertions only if the lab intentionally adds delegated-management proof.",
-        "devops needs a real Azure DevOps organization, project, and pipeline path before it can move past conditional validation of command behavior and truthful issue surfacing.",
+        "devops still depends on a real Azure DevOps org/project/repo plus a visible Azure service connection and variable group; this repo owns the YAML canary sync once those prerequisites exist.",
         "automation currently validates the visible zero-object execution posture, but the current AzureFox read path did not return a managed-identity type for the lab-owned Automation account during the April 8, 2026 live pass.",
       ]
     }

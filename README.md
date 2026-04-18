@@ -93,7 +93,8 @@ Current release boundary:
 - this repo now targets AzureFox `1.3.0` as the current parity boundary
 - deterministic lab-backed proof now includes `snapshots-disks`, `vmss`, and one Automation account
 - `lighthouse` and `cross-tenant` are validated as evidence-led tenant surfaces rather than fixed row-count proof
-- `devops` is validated conditionally: without `AZUREFOX_DEVOPS_ORG`, the validator expects the truthful missing-organization issue instead of pretending pipeline coverage exists
+- `devops` now has three lab-owned YAML canaries once a real Azure DevOps org/project/repo context is provided:
+  root YAML, same-repo template follow, and named-target App Service join
 - grouped `chains` follow-up remains optional here; Firefox/AzureFox `1.3.0` added more live-proof-aware `credential-path` wording, but this lab still treats grouped chain output as secondary to the standalone validation gate
 
 ## Lab Shape
@@ -337,6 +338,33 @@ For richer `devops` proof, point AzureFox at a real Azure DevOps organization be
 ```bash
 export AZUREFOX_DEVOPS_ORG=<org-name>
 ```
+
+Before the DevOps canaries can be synced, the Azure DevOps side needs these prerequisites:
+
+1. A project. The default expected project name is `Azurefox Proof Lab`.
+2. An Azure Repos repo. The default expected repo name is `lab-proof`.
+3. A variable group. The default expected name is `af-proof-lab-vars`.
+   The current canaries only need the group to exist; one placeholder variable such as
+   `LAB_PROOF_SECRET=not-real` is enough.
+4. An Azure Resource Manager service connection. The default expected name is `af-rg-reader`.
+   Point it at the same subscription as the lab. Workload identity federation is the preferred
+   scheme because AzureFox surfaces that trust path cleanly in live output.
+
+Once those prerequisites exist, sync the tracked canary YAML into the DevOps repo and ensure the
+pipeline definitions exist:
+
+```bash
+python3 scripts/sync_devops_canaries.py --org "https://dev.azure.com/<org-name>/"
+```
+
+That sync step maintains three proof pipelines in the DevOps project:
+
+- `lab-proof`: direct root-YAML canary
+- `lab-proof-template`: same-repo template-follow canary
+- `lab-proof-targeted`: named-target App Service canary
+
+If you use different DevOps names, the sync helper accepts overrides for the project, repo, service
+connection, variable group, and pipeline names.
 
 Optional flags:
 

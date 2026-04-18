@@ -742,6 +742,13 @@ def find_function_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"functions output missing asset '{name}'")
 
 
+def find_devops_pipeline(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for pipeline in payload.get("pipelines", []):
+        if pipeline.get("name") == name:
+            return pipeline
+    raise AssertionError(f"devops output missing pipeline '{name}'")
+
+
 def find_container_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
     for asset in payload.get("container_apps", []):
         if asset.get("name") == name:
@@ -1254,6 +1261,7 @@ def validate_outputs(
         )
         devops_organization = (devops.get("metadata") or {}).get("devops_organization")
         if devops_organization:
+            expected_devops = phase4_manifest.get("devops", {})
             assert_true(
                 devops_config_issue is None,
                 "devops unexpectedly reported an organization-configuration issue despite metadata.devops_organization",
@@ -1262,8 +1270,42 @@ def validate_outputs(
                 isinstance(devops.get("pipelines", []), list),
                 "devops did not return a pipelines list",
             )
+            expected_service_connection_name = expected_devops.get("expected_service_connection_name")
+            expected_variable_group_name = expected_devops.get("expected_variable_group_name")
+            expected_pipelines = expected_devops.get("pipelines", {})
+            for pipeline_key in ("root_yaml", "template_follow", "named_target"):
+                pipeline_expectation = expected_pipelines.get(pipeline_key)
+                if not pipeline_expectation:
+                    continue
+                pipeline = find_devops_pipeline(devops, pipeline_expectation["name"])
+                if expected_service_connection_name:
+                    assert_true(
+                        expected_service_connection_name
+                        in pipeline.get("azure_service_connection_names", []),
+                        f"devops pipeline '{pipeline_expectation['name']}' missing expected Azure service connection",
+                    )
+                if pipeline_expectation.get("expect_variable_group") and expected_variable_group_name:
+                    assert_true(
+                        expected_variable_group_name in pipeline.get("variable_group_names", []),
+                        f"devops pipeline '{pipeline_expectation['name']}' missing expected variable group",
+                    )
+                if pipeline_expectation.get("expect_named_target"):
+                    expected_target_clue = pipeline_expectation["expected_target_clue"]
+                    assert_true(
+                        expected_target_clue in pipeline.get("target_clues", []),
+                        f"devops pipeline '{pipeline_expectation['name']}' missing expected named-target clue",
+                    )
+                    assert_true(
+                        pipeline.get("missing_target_mapping") is False,
+                        f"devops pipeline '{pipeline_expectation['name']}' unexpectedly stayed in missing-target mode",
+                    )
+                else:
+                    assert_true(
+                        pipeline.get("missing_target_mapping") is True,
+                        f"devops pipeline '{pipeline_expectation['name']}' unexpectedly claimed a named target",
+                    )
             checks.append(
-                "devops used the configured Azure DevOps organization and returned pipeline evidence without a configuration error"
+                "devops used the configured Azure DevOps organization and surfaced the root-YAML, template-follow, and named-target canaries"
             )
         else:
             assert_true(

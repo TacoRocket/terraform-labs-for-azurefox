@@ -264,6 +264,23 @@ class ValidateAzureFoxLabTests(unittest.TestCase):
 
         self.assertIn("application-gateway surfaced", message)
 
+    def test_find_devops_pipeline_returns_matching_pipeline(self) -> None:
+        validator = load_validator_module()
+
+        pipeline = validator.find_devops_pipeline(
+            {
+                "pipelines": [
+                    {
+                        "name": "lab-proof-targeted",
+                        "target_clues": ["App Service: app-public-api-123456"],
+                    }
+                ]
+            },
+            "lab-proof-targeted",
+        )
+
+        self.assertEqual(pipeline["name"], "lab-proof-targeted")
+
     def test_validate_application_gateway_output_accepts_firewall_policy_without_mode(self) -> None:
         validator = load_validator_module()
 
