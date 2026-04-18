@@ -61,6 +61,7 @@ Current validator coverage:
 - `dns`
 - `endpoints`
 - `network-ports`
+- `network-effective`
 - `workloads`
 - `app-services`
 - `functions`
@@ -152,6 +153,7 @@ With this setup, AzureFox should surface:
 - NIC attachment and public-IP references from `nics`
 - public IP and Azure-managed hostname visibility from `endpoints`
 - NIC-backed public ingress evidence from `network-ports`
+- effective public-IP exposure triage from `network-effective`
 - a joined compute plus web workload census from `workloads`
 - App Service hostname, identity, and posture inventory from `app-services`
 - Function App hostname, identity, and deployment-signal inventory from `functions`
