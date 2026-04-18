@@ -12,6 +12,20 @@ stored in `VERSION`.
 
 No unreleased entries yet.
 
+## [1.5.0] - 2026-04-18
+
+### Changed
+
+- widened reduced-viewpoint validation to the full standalone AzureFox command surface and proved
+  the current admin, `dev`, and `lower-privilege` lanes live against the same shipped command set
+- added lab-owned Azure DevOps YAML canaries plus a sync helper so `devops` and
+  `chains deployment-path` can prove root-YAML collection, same-repo template following, bounded
+  fallback, and a stronger named-target App Service join once a real DevOps org/project/repo
+  context exists
+- promoted `network-effective`, `application-gateway`, `container-apps`, and
+  `container-instances` into the live lab parity surface with manifest-backed validation
+- refreshed the release-boundary docs and lab `VERSION` to match AzureFox `1.5.0`
+
 ## [1.3.0] - 2026-04-09
 
 ### Changed
