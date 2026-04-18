@@ -586,14 +586,14 @@ output "validation_manifest" {
         expected_variable_group_name          = "af-proof-lab-vars"
         pipelines = {
           root_yaml = {
-            name                   = "lab-proof"
-            expect_variable_group  = true
-            expect_named_target    = false
+            name                  = "lab-proof"
+            expect_variable_group = true
+            expect_named_target   = false
           }
           template_follow = {
-            name                   = "lab-proof-template"
-            expect_variable_group  = true
-            expect_named_target    = false
+            name                  = "lab-proof-template"
+            expect_variable_group = true
+            expect_named_target   = false
           }
           named_target = {
             name                  = "lab-proof-targeted"
