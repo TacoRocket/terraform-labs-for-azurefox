@@ -39,6 +39,7 @@ COMMANDS = [
     "dns",
     "endpoints",
     "network-ports",
+    "network-effective",
     "workloads",
     "app-services",
     "functions",
@@ -624,6 +625,60 @@ def find_network_port(
             return row
     raise AssertionError(
         f"network-ports output missing {protocol} {port} for asset '{asset_name}' on endpoint '{endpoint}'"
+    )
+
+
+def find_network_effective(
+    payload: dict[str, Any],
+    *,
+    asset_name: str,
+    endpoint: str,
+) -> dict[str, Any]:
+    for row in payload.get("effective_exposures", []):
+        if row.get("asset_name") == asset_name and row.get("endpoint") == endpoint:
+            return row
+    raise AssertionError(
+        f"network-effective output missing endpoint '{endpoint}' for asset '{asset_name}'"
+    )
+
+
+def validate_network_effective_output(
+    phase3_manifest: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    expected_effective = phase3_manifest["network_effective"]["public_vm"]
+    effective_row = find_network_effective(
+        payload,
+        asset_name=expected_effective["asset_name"],
+        endpoint=expected_effective["endpoint"],
+    )
+    assert_true(
+        effective_row.get("endpoint_type") == expected_effective["endpoint_type"],
+        "network-effective endpoint_type drifted from the intended public-IP proof",
+    )
+    assert_true(
+        effective_row.get("effective_exposure") == expected_effective["effective_exposure"],
+        "network-effective effective_exposure drifted from the intended subnet-NSG proof",
+    )
+    assert_true(
+        effective_row.get("internet_exposed_ports") == expected_effective["internet_exposed_ports"],
+        "network-effective internet_exposed_ports drifted from the intended subnet-NSG proof",
+    )
+    assert_true(
+        effective_row.get("constrained_ports") == expected_effective["constrained_ports"],
+        "network-effective constrained_ports drifted from the intended subnet-NSG proof",
+    )
+    assert_true(
+        effective_row.get("observed_paths") == expected_effective["observed_paths"],
+        "network-effective observed_paths drifted from the intended Azure NSG observation",
+    )
+    assert_true(
+        "not proof of full effective reachability" in str(effective_row.get("summary", "")),
+        "network-effective summary lost the intended evidence-boundary warning",
+    )
+    return (
+        "network-effective summarized the public VM as high-confidence SSH exposure "
+        "while keeping the reachability boundary explicit"
     )
 
 
@@ -1360,6 +1415,8 @@ def validate_outputs(
             "network-ports allow_source_summary drifted from the intended subnet NSG proof",
         )
         checks.append("network-ports surfaced subnet-NSG-backed ingress evidence for the public VM without inferring full reachability")
+
+        checks.append(validate_network_effective_output(phase3_manifest, outputs["network-effective"]))
 
         workloads = outputs["workloads"]
         for expected in phase3_manifest["workloads"]["expected_assets"]:

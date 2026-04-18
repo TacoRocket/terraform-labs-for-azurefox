@@ -270,6 +270,7 @@ output "validation_manifest" {
         "dns",
         "endpoints",
         "network-ports",
+        "network-effective",
         "workloads",
         "app-services",
         "functions",
@@ -357,6 +358,19 @@ output "validation_manifest" {
           endpoint             = azurerm_public_ip.vm_web.ip_address
           port                 = "22"
           protocol             = "TCP"
+        }
+      }
+      network_effective = {
+        public_vm = {
+          asset_name             = azurerm_linux_virtual_machine.vm_web.name
+          constrained_ports      = []
+          effective_exposure     = "high"
+          endpoint               = azurerm_public_ip.vm_web.ip_address
+          endpoint_type          = "ip"
+          internet_exposed_ports = ["TCP/22"]
+          observed_paths = [
+            "Internet via subnet-nsg:${azurerm_resource_group.network.name}/${azurerm_network_security_group.workload.name}/${azurerm_network_security_rule.workload_allow_ssh_internet.name}"
+          ]
         }
       }
       workloads = {
@@ -660,6 +674,7 @@ output "validation_manifest" {
           "dns",
           "endpoints",
           "network-ports",
+          "network-effective",
           "workloads",
           "app-services",
           "functions",

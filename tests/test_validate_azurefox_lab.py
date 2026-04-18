@@ -141,6 +141,64 @@ class ValidateAzureFoxLabTests(unittest.TestCase):
             )
         )
 
+    def test_find_network_effective_returns_matching_row(self) -> None:
+        validator = load_validator_module()
+
+        row = validator.find_network_effective(
+            {
+                "effective_exposures": [
+                    {
+                        "asset_name": "vm-web-01",
+                        "endpoint": "1.2.3.4",
+                        "effective_exposure": "high",
+                    }
+                ]
+            },
+            asset_name="vm-web-01",
+            endpoint="1.2.3.4",
+        )
+
+        self.assertEqual(row["effective_exposure"], "high")
+
+    def test_validate_network_effective_output_accepts_manifest_backed_row(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_network_effective_output(
+            {
+                "network_effective": {
+                    "public_vm": {
+                        "asset_name": "vm-web-01",
+                        "constrained_ports": [],
+                        "effective_exposure": "high",
+                        "endpoint": "1.2.3.4",
+                        "endpoint_type": "ip",
+                        "internet_exposed_ports": ["TCP/22"],
+                        "observed_paths": ["Internet via subnet-nsg:rg-network/nsg-workload/allow-ssh-internet"],
+                    }
+                }
+            },
+            {
+                "effective_exposures": [
+                    {
+                        "asset_name": "vm-web-01",
+                        "constrained_ports": [],
+                        "effective_exposure": "high",
+                        "endpoint": "1.2.3.4",
+                        "endpoint_type": "ip",
+                        "internet_exposed_ports": ["TCP/22"],
+                        "observed_paths": ["Internet via subnet-nsg:rg-network/nsg-workload/allow-ssh-internet"],
+                        "summary": (
+                            "Asset 'vm-web-01' endpoint 1.2.3.4 has internet-facing allow evidence "
+                            "on TCP/22. Treat this as visible Azure network triage signal, not proof "
+                            "of full effective reachability."
+                        ),
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("network-effective summarized", message)
+
 
 if __name__ == "__main__":
     unittest.main()
