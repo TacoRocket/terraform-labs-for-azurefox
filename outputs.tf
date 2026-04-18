@@ -271,9 +271,12 @@ output "validation_manifest" {
         "endpoints",
         "network-ports",
         "network-effective",
+        "application-gateway",
         "workloads",
         "app-services",
         "functions",
+        "container-apps",
+        "container-instances",
         "api-mgmt",
         "aks",
         "acr",
@@ -373,6 +376,18 @@ output "validation_manifest" {
           ]
         }
       }
+      application_gateway = {
+        edge = {
+          name                       = azurerm_application_gateway.phase3_edge.name
+          public_frontend_count      = 1
+          listener_count             = 1
+          request_routing_rule_count = 1
+          backend_pool_count         = 1
+          backend_target_count       = 1
+          waf_mode                   = "Prevention"
+          firewall_policy_id         = azurerm_web_application_firewall_policy.phase3_application_gateway.id
+        }
+      }
       workloads = {
         expected_assets = [
           {
@@ -426,6 +441,28 @@ output "validation_manifest" {
           name                      = azurerm_linux_function_app.phase2_orders.name
           public_network_access     = "Enabled"
           workload_identity_type    = "SystemAssigned, UserAssigned"
+        }
+      }
+      container_apps = {
+        public_api = {
+          name                     = azurerm_container_app.phase3_public_api.name
+          default_hostname         = "${azurerm_container_app.phase3_public_api.name}.${azurerm_container_app_environment.phase3_public.default_domain}"
+          external_ingress_enabled = true
+          ingress_target_port      = 80
+          revision_mode            = azurerm_container_app.phase3_public_api.revision_mode
+          environment_id           = azurerm_container_app_environment.phase3_public.id
+          workload_identity_type   = "UserAssigned"
+        }
+      }
+      container_instances = {
+        public_web = {
+          name                   = azurerm_container_group.phase3_public_web.name
+          public_ip_address      = azurerm_container_group.phase3_public_web.ip_address
+          fqdn                   = azurerm_container_group.phase3_public_web.fqdn
+          exposed_ports          = [80]
+          restart_policy         = azurerm_container_group.phase3_public_web.restart_policy
+          os_type                = azurerm_container_group.phase3_public_web.os_type
+          workload_identity_type = "UserAssigned"
         }
       }
       api_mgmt = {
@@ -675,9 +712,12 @@ output "validation_manifest" {
           "endpoints",
           "network-ports",
           "network-effective",
+          "application-gateway",
           "workloads",
           "app-services",
           "functions",
+          "container-apps",
+          "container-instances",
           "api-mgmt",
           "aks",
           "acr",
@@ -689,8 +729,46 @@ output "validation_manifest" {
         validation_mode     = "release-gate"
       }
       dev = {
-        artifact_subdir     = "dev"
-        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        artifact_subdir = "dev"
+        commands = [
+          "whoami",
+          "inventory",
+          "automation",
+          "devops",
+          "arm-deployments",
+          "env-vars",
+          "tokens-credentials",
+          "rbac",
+          "principals",
+          "permissions",
+          "privesc",
+          "role-trusts",
+          "lighthouse",
+          "cross-tenant",
+          "resource-trusts",
+          "auth-policies",
+          "managed-identities",
+          "keyvault",
+          "storage",
+          "vms",
+          "vmss",
+          "nics",
+          "dns",
+          "endpoints",
+          "network-ports",
+          "network-effective",
+          "application-gateway",
+          "workloads",
+          "app-services",
+          "functions",
+          "container-apps",
+          "container-instances",
+          "api-mgmt",
+          "aks",
+          "acr",
+          "databases",
+          "snapshots-disks",
+        ]
         display_name        = azuread_application.viewpoint_dev.display_name
         expected_visibility = "scoped-workload-operator"
         forbidden_roles     = ["Owner"]
@@ -705,8 +783,46 @@ output "validation_manifest" {
         ]
       }
       lower_privilege = {
-        artifact_subdir     = "lower-privilege"
-        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        artifact_subdir = "lower-privilege"
+        commands = [
+          "whoami",
+          "inventory",
+          "automation",
+          "devops",
+          "arm-deployments",
+          "env-vars",
+          "tokens-credentials",
+          "rbac",
+          "principals",
+          "permissions",
+          "privesc",
+          "role-trusts",
+          "lighthouse",
+          "cross-tenant",
+          "resource-trusts",
+          "auth-policies",
+          "managed-identities",
+          "keyvault",
+          "storage",
+          "vms",
+          "vmss",
+          "nics",
+          "dns",
+          "endpoints",
+          "network-ports",
+          "network-effective",
+          "application-gateway",
+          "workloads",
+          "app-services",
+          "functions",
+          "container-apps",
+          "container-instances",
+          "api-mgmt",
+          "aks",
+          "acr",
+          "databases",
+          "snapshots-disks",
+        ]
         display_name        = azuread_application.viewpoint_low_priv.display_name
         expected_visibility = "constrained-workload-reader"
         forbidden_roles     = ["Owner", "Contributor"]

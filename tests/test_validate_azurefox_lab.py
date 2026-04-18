@@ -22,6 +22,18 @@ def load_validator_module():
 
 
 class ValidateAzureFoxLabTests(unittest.TestCase):
+    def test_viewpoint_commands_use_full_command_surface_for_reduced_viewpoints(self) -> None:
+        validator = load_validator_module()
+
+        self.assertEqual(
+            validator.viewpoint_commands("dev", set()),
+            validator.COMMANDS,
+        )
+        self.assertEqual(
+            validator.viewpoint_commands("lower-privilege", set()),
+            validator.COMMANDS,
+        )
+
     def test_run_azurefox_failure_keeps_viewpoint_in_timeline_write(self) -> None:
         validator = load_validator_module()
 
@@ -198,6 +210,236 @@ class ValidateAzureFoxLabTests(unittest.TestCase):
         )
 
         self.assertIn("network-effective summarized", message)
+
+    def test_find_application_gateway_returns_matching_row(self) -> None:
+        validator = load_validator_module()
+
+        row = validator.find_application_gateway(
+            {
+                "application_gateways": [
+                    {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                    }
+                ]
+            },
+            "agw-edge-123456",
+        )
+
+        self.assertEqual(row["public_frontend_count"], 1)
+
+    def test_validate_application_gateway_output_accepts_manifest_backed_row(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_application_gateway_output(
+            {
+                "application_gateway": {
+                    "edge": {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": "Prevention",
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                }
+            },
+            {
+                "application_gateways": [
+                    {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": "Prevention",
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("application-gateway surfaced", message)
+
+    def test_validate_application_gateway_output_accepts_firewall_policy_without_mode(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_application_gateway_output(
+            {
+                "application_gateway": {
+                    "edge": {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": "Prevention",
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                }
+            },
+            {
+                "application_gateways": [
+                    {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": None,
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("application-gateway surfaced", message)
+
+    def test_validate_application_gateway_output_normalizes_firewall_policy_id_case(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_application_gateway_output(
+            {
+                "application_gateway": {
+                    "edge": {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": "Prevention",
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                }
+            },
+            {
+                "application_gateways": [
+                    {
+                        "name": "agw-edge-123456",
+                        "public_frontend_count": 1,
+                        "listener_count": 1,
+                        "request_routing_rule_count": 1,
+                        "backend_pool_count": 1,
+                        "backend_target_count": 1,
+                        "waf_mode": None,
+                        "firewall_policy_id": "/subscriptions/sub/resourceGroups/rg-network/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/waf-edge-123456",
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("application-gateway surfaced", message)
+
+    def test_find_container_app_returns_matching_row(self) -> None:
+        validator = load_validator_module()
+
+        row = validator.find_container_app(
+            {
+                "container_apps": [
+                    {
+                        "name": "ca-public-123456",
+                        "default_hostname": "ca-public-123456.bluepond.westeurope.azurecontainerapps.io",
+                    }
+                ]
+            },
+            "ca-public-123456",
+        )
+
+        self.assertEqual(
+            row["default_hostname"],
+            "ca-public-123456.bluepond.westeurope.azurecontainerapps.io",
+        )
+
+    def test_validate_container_app_output_accepts_manifest_backed_row(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_container_app_output(
+            {
+                "container_apps": {
+                    "public_api": {
+                        "name": "ca-public-123456",
+                        "default_hostname": "ca-public-123456.bluepond.westeurope.azurecontainerapps.io",
+                        "external_ingress_enabled": True,
+                        "ingress_target_port": 80,
+                        "revision_mode": "Single",
+                        "environment_id": "/subscriptions/sub/resourceGroups/rg-workload/providers/Microsoft.App/managedEnvironments/cae-ops-123456",
+                        "workload_identity_type": "UserAssigned",
+                    }
+                }
+            },
+            {
+                "container_apps": [
+                    {
+                        "name": "ca-public-123456",
+                        "default_hostname": "ca-public-123456.bluepond.westeurope.azurecontainerapps.io",
+                        "external_ingress_enabled": True,
+                        "ingress_target_port": 80,
+                        "revision_mode": "Single",
+                        "environment_id": "/subscriptions/sub/resourceGroups/rg-workload/providers/Microsoft.App/managedEnvironments/cae-ops-123456",
+                        "workload_identity_type": "UserAssigned",
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("container-apps surfaced", message)
+
+    def test_find_container_instance_returns_matching_row(self) -> None:
+        validator = load_validator_module()
+
+        row = validator.find_container_instance(
+            {
+                "container_instances": [
+                    {
+                        "name": "aci-web-123456",
+                        "public_ip_address": "1.2.3.4",
+                    }
+                ]
+            },
+            "aci-web-123456",
+        )
+
+        self.assertEqual(row["public_ip_address"], "1.2.3.4")
+
+    def test_validate_container_instance_output_accepts_manifest_backed_row(self) -> None:
+        validator = load_validator_module()
+
+        message = validator.validate_container_instance_output(
+            {
+                "container_instances": {
+                    "public_web": {
+                        "name": "aci-web-123456",
+                        "public_ip_address": "1.2.3.4",
+                        "fqdn": "aci-web-123456.centralus.azurecontainer.io",
+                        "exposed_ports": [80],
+                        "restart_policy": "Always",
+                        "os_type": "Linux",
+                        "workload_identity_type": "UserAssigned",
+                    }
+                }
+            },
+            {
+                "container_instances": [
+                    {
+                        "name": "aci-web-123456",
+                        "public_ip_address": "1.2.3.4",
+                        "fqdn": "aci-web-123456.centralus.azurecontainer.io",
+                        "exposed_ports": [80],
+                        "restart_policy": "Always",
+                        "os_type": "Linux",
+                        "workload_identity_type": "UserAssigned",
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("container-instances surfaced", message)
 
 
 if __name__ == "__main__":
