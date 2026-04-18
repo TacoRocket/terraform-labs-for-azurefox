@@ -15,6 +15,8 @@ locals {
   function_storage_name          = substr("st${local.sanitized_prefix}func${local.unique_suffix}", 0, 24)
   roletrust_api_name             = "af-roletrust-api"
   roletrust_client_name          = "af-roletrust-client"
+  viewpoint_dev_name             = "af-viewpoint-dev"
+  viewpoint_low_priv_name        = "af-viewpoint-lowpriv"
   keyvault_open_name             = substr("kvlabopen01${local.unique_suffix}", 0, 24)
   keyvault_private_name          = substr("kvlabpriv01${local.unique_suffix}", 0, 24)
   keyvault_deny_name             = substr("kvlabdeny01${local.unique_suffix}", 0, 24)
@@ -34,6 +36,7 @@ locals {
   phase3_sql_admin_password      = "AzFox!${substr(local.unique_suffix, 0, 4)}${substr(local.unique_suffix, 4, 4)}"
   phase3_public_dns_zone_name    = "af-${substr(local.unique_suffix, 0, 6)}.example.net"
   phase3_private_dns_zone_name   = "azurefox-${substr(local.unique_suffix, 0, 6)}.internal"
+  phase4_automation_name         = "aa-ops-${substr(local.unique_suffix, 0, 6)}"
   phase2_sub_template_hash       = substr(filemd5("${path.module}/scripts/arm-templates/sub-foundation.json"), 0, 8)
   phase2_rg_parameters_hash      = substr(filemd5("${path.module}/scripts/arm-templates/kv-secrets.parameters.json"), 0, 8)
   phase2_sub_template_blob_name  = "templates/sub-foundation-${local.phase2_sub_template_hash}.json"
@@ -82,6 +85,18 @@ resource "azurerm_resource_group" "ops" {
   name     = local.resource_groups.ops
   location = var.location
   tags     = local.tags
+}
+
+resource "azurerm_automation_account" "phase4" {
+  name                = local.phase4_automation_name
+  location            = azurerm_resource_group.ops.location
+  resource_group_name = azurerm_resource_group.ops.name
+  sku_name            = "Basic"
+  tags                = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 resource "azurerm_virtual_network" "lab" {
@@ -243,6 +258,54 @@ resource "azuread_app_role_assignment" "roletrust_client_to_api" {
   app_role_id         = local.roletrust_api_app_role_id
   principal_object_id = azuread_service_principal.roletrust_client.object_id
   resource_object_id  = azuread_service_principal.roletrust_api.object_id
+}
+
+resource "azuread_application" "viewpoint_dev" {
+  display_name     = local.viewpoint_dev_name
+  owners           = [data.azuread_client_config.current.object_id]
+  sign_in_audience = "AzureADMyOrg"
+}
+
+resource "azuread_service_principal" "viewpoint_dev" {
+  client_id                    = azuread_application.viewpoint_dev.client_id
+  app_role_assignment_required = false
+  owners                       = [data.azuread_client_config.current.object_id]
+}
+
+resource "azuread_application_password" "viewpoint_dev" {
+  application_id = azuread_application.viewpoint_dev.id
+  display_name   = "validator-dev"
+  end_date       = "2099-01-01T00:00:00Z"
+}
+
+resource "azuread_application" "viewpoint_low_priv" {
+  display_name     = local.viewpoint_low_priv_name
+  owners           = [data.azuread_client_config.current.object_id]
+  sign_in_audience = "AzureADMyOrg"
+}
+
+resource "azuread_service_principal" "viewpoint_low_priv" {
+  client_id                    = azuread_application.viewpoint_low_priv.client_id
+  app_role_assignment_required = false
+  owners                       = [data.azuread_client_config.current.object_id]
+}
+
+resource "azuread_application_password" "viewpoint_low_priv" {
+  application_id = azuread_application.viewpoint_low_priv.id
+  display_name   = "validator-low-privilege"
+  end_date       = "2099-01-01T00:00:00Z"
+}
+
+resource "azurerm_role_assignment" "viewpoint_dev_workload_contributor" {
+  scope                = azurerm_resource_group.workload.id
+  role_definition_name = "Contributor"
+  principal_id         = azuread_service_principal.viewpoint_dev.object_id
+}
+
+resource "azurerm_role_assignment" "viewpoint_low_priv_workload_reader" {
+  scope                = azurerm_resource_group.workload.id
+  role_definition_name = "Reader"
+  principal_id         = azuread_service_principal.viewpoint_low_priv.object_id
 }
 
 resource "azurerm_linux_virtual_machine" "vm_web" {
@@ -720,6 +783,7 @@ resource "azurerm_kubernetes_cluster" "phase3" {
   location                          = azurerm_resource_group.workload.location
   resource_group_name               = azurerm_resource_group.workload.name
   dns_prefix                        = local.phase3_aks_dns_prefix
+  oidc_issuer_enabled               = true
   role_based_access_control_enabled = true
   sku_tier                          = "Free"
   tags                              = local.tags
@@ -849,7 +913,18 @@ resource "terraform_data" "phase2_deployment_history" {
   }
 
   provisioner "local-exec" {
-    command = "python3 ${path.module}/scripts/create_phase2_deployment_history.py --subscription-id '${self.input.subscription_id}' --location '${self.input.location}' --subscription-deployment-name '${self.input.subscription_deployment_name}' --subscription-template-uri '${self.input.subscription_template_uri}' --resource-group '${self.input.resource_group}' --resource-group-deployment-name '${self.input.resource_group_deployment_name}' --resource-group-parameters-uri '${self.input.resource_group_parameters_uri}' --failed-resource-group '${self.input.failed_resource_group}' --failed-deployment-name '${self.input.failed_deployment_name}'"
+    environment = {
+      AF_FAILED_DEPLOYMENT_NAME         = self.input.failed_deployment_name
+      AF_FAILED_RESOURCE_GROUP          = self.input.failed_resource_group
+      AF_LOCATION                       = self.input.location
+      AF_RESOURCE_GROUP                 = self.input.resource_group
+      AF_RESOURCE_GROUP_DEPLOYMENT_NAME = self.input.resource_group_deployment_name
+      AF_RESOURCE_GROUP_PARAMETERS_URI  = self.input.resource_group_parameters_uri
+      AF_SUBSCRIPTION_DEPLOYMENT_NAME   = self.input.subscription_deployment_name
+      AF_SUBSCRIPTION_ID                = self.input.subscription_id
+      AF_SUBSCRIPTION_TEMPLATE_URI      = self.input.subscription_template_uri
+    }
+    command = "python3 \"${path.module}/scripts/create_phase2_deployment_history.py\""
   }
 
   depends_on = [

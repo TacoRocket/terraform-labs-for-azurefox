@@ -109,7 +109,6 @@ output "validation_manifest" {
       validation_mode = "non-invasive"
     }
     identity_checkpoint = {
-      all_checks_section = "identity"
       commands = [
         "whoami",
         "rbac",
@@ -120,13 +119,12 @@ output "validation_manifest" {
         "auth-policies",
         "managed-identities",
       ]
+      grouped_follow_up = [
+        "chains credential-path",
+        "chains escalation-path",
+      ]
     }
     phase2_checkpoint = {
-      all_checks_sections = [
-        "config",
-        "secrets",
-        "resource",
-      ]
       commands = [
         "keyvault",
         "resource-trusts",
@@ -134,9 +132,12 @@ output "validation_manifest" {
         "env-vars",
         "tokens-credentials",
       ]
+      grouped_follow_up = [
+        "chains deployment-path",
+      ]
       key_vaults = {
         open = {
-          expected_finding_prefix  = "keyvault-public-network-enabled-"
+          expected_finding_prefix  = "keyvault-public-network-open-"
           name                     = azurerm_key_vault.open.name
           network_default_action   = "Allow"
           private_endpoint_enabled = false
@@ -263,12 +264,8 @@ output "validation_manifest" {
       }
     }
     phase3_checkpoint = {
-      all_checks_sections = [
-        "network",
-        "compute",
-        "resource",
-      ]
       commands = [
+        "storage",
         "nics",
         "dns",
         "endpoints",
@@ -280,7 +277,41 @@ output "validation_manifest" {
         "aks",
         "acr",
         "databases",
+        "vmss",
       ]
+      grouped_follow_up = [
+        "chains deployment-path",
+      ]
+      storage = {
+        public = {
+          allow_shared_key_access    = true
+          dns_endpoint_type          = "Standard"
+          https_traffic_only_enabled = true
+          is_hns_enabled             = false
+          is_sftp_enabled            = false
+          minimum_tls_version        = "TLS1_2"
+          name                       = azurerm_storage_account.public.name
+          network_default_action     = "Allow"
+          nfs_v3_enabled             = false
+          private_endpoint_enabled   = false
+          public_access              = true
+          public_network_access      = "Enabled"
+        }
+        private = {
+          allow_shared_key_access    = true
+          dns_endpoint_type          = "Standard"
+          https_traffic_only_enabled = true
+          is_hns_enabled             = false
+          is_sftp_enabled            = false
+          minimum_tls_version        = "TLS1_2"
+          name                       = azurerm_storage_account.private.name
+          network_default_action     = "Deny"
+          nfs_v3_enabled             = false
+          private_endpoint_enabled   = true
+          public_access              = false
+          public_network_access      = "Enabled"
+        }
+      }
       nics = {
         vm_primary = {
           attached_asset_name = azurerm_linux_virtual_machine.vm_web.name
@@ -354,12 +385,6 @@ output "validation_manifest" {
             endpoint      = azurerm_linux_function_app.phase2_orders.default_hostname
             identity_type = "SystemAssigned, UserAssigned"
           },
-          {
-            asset_kind    = "VMSS"
-            asset_name    = azurerm_linux_virtual_machine_scale_set.vmss_api.name
-            endpoint      = null
-            identity_type = null
-          },
         ]
       }
       app_services = {
@@ -391,99 +416,153 @@ output "validation_manifest" {
       }
       api_mgmt = {
         edge = {
-          api_count               = 1
-          backend_count           = 1
-          gateway_hostname_suffix = ".azure-api.net"
-          name                    = azurerm_api_management.phase3.name
-          named_value_count       = 1
-          public_network_access   = "Enabled"
-          workload_identity_type  = "SystemAssigned"
+          active_subscription_count       = 1
+          api_count                       = 1
+          api_subscription_required_count = 0
+          backend_count                   = 1
+          backend_hostnames               = [azurerm_linux_web_app.phase2_public.default_hostname]
+          gateway_hostname_suffix         = ".azure-api.net"
+          name                            = azurerm_api_management.phase3.name
+          named_value_count               = 1
+          named_value_key_vault_count     = 0
+          named_value_secret_count        = 0
+          public_network_access           = "Enabled"
+          subscription_count              = 1
+          workload_identity_type          = "SystemAssigned"
         }
       }
       aks = {
         ops = {
-          cluster_identity_type   = "SystemAssigned"
-          name                    = azurerm_kubernetes_cluster.phase3.name
-          private_cluster_enabled = false
+          agent_pool_count      = 1
+          cluster_identity_type = "SystemAssigned"
+          name                  = azurerm_kubernetes_cluster.phase3.name
+          oidc_issuer_enabled   = true
         }
       }
       acr = {
         public = {
-          admin_user_enabled     = true
-          login_server           = azurerm_container_registry.phase3.login_server
-          name                   = azurerm_container_registry.phase3.name
-          public_network_access  = "Enabled"
-          workload_identity_type = "SystemAssigned"
+          admin_user_enabled       = true
+          enabled_webhook_count    = 0
+          login_server             = azurerm_container_registry.phase3.login_server
+          name                     = azurerm_container_registry.phase3.name
+          quarantine_policy_status = "disabled"
+          replication_count        = 0
+          retention_policy_days    = 7
+          retention_policy_status  = "disabled"
+          trust_policy_status      = "disabled"
+          trust_policy_type        = "notary"
+          webhook_count            = 0
         }
       }
       databases = {
         primary = {
           engine                      = "AzureSql"
           fully_qualified_domain_name = azurerm_mssql_server.phase3.fully_qualified_domain_name
+          minimal_tls_version         = "1.2"
           name                        = azurerm_mssql_server.phase3.name
           public_network_access       = "Enabled"
           user_database_names         = [azurerm_mssql_database.phase3.name]
         }
       }
-      dns = {
-        private_zone = {
-          linked_virtual_network_count       = 1
-          minimum_record_set_count           = 1
-          name                               = azurerm_private_dns_zone.phase3_internal.name
-          registration_virtual_network_count = 1
-          zone_kind                          = "private"
+      vmss = {
+        api = {
+          identity_type                 = null
+          instance_count                = 1
+          name                          = azurerm_linux_virtual_machine_scale_set.vmss_api.name
+          nic_configuration_count       = 1
+          public_ip_configuration_count = 0
+          sku_name                      = var.vmss_sku
+          subnet_id                     = azurerm_subnet.workload.id
         }
+      }
+      dns = {
         public_zone = {
-          expected_name_server_count = 4
-          minimum_record_set_count   = 3
-          name                       = azurerm_dns_zone.phase3_public.name
-          zone_kind                  = "public"
+          name      = azurerm_dns_zone.phase3_public.name
+          zone_kind = "public"
+        }
+        private_zones = {
+          blob = {
+            name                             = azurerm_private_dns_zone.blob.name
+            private_endpoint_reference_count = 1
+            zone_kind                        = "private"
+          }
+          internal = {
+            name                             = azurerm_private_dns_zone.phase3_internal.name
+            private_endpoint_reference_count = 0
+            zone_kind                        = "private"
+          }
+          keyvault = {
+            name                             = azurerm_private_dns_zone.keyvault.name
+            private_endpoint_reference_count = 2
+            zone_kind                        = "private"
+          }
         }
       }
       known_gaps = [
         "Azure-managed hostnames in endpoints and workloads are visibility proof, not proven live ingress reachability.",
         "network-ports remains narrow NIC-backed public endpoint evidence and does not prove full effective-network reachability.",
-        "DNS validation in this lab stays at zone metadata, delegation counts, and VNet-link counts rather than record contents or resolver behavior.",
+        "Current DNS validation in this lab stays at namespace-usage metadata and private-endpoint reference counts because the current read path did not expose stable record totals, delegation details, or VNet-link counters.",
+        "If a live rerun against the current AzureFox checkout still omits ACR public-network or managed-identity posture, keep the validator conservative instead of overclaiming fields the read path does not return consistently.",
       ]
     }
-    all_checks_sections = {
-      identity = [
-        "whoami",
-        "rbac",
-        "principals",
-        "permissions",
-        "privesc",
-        "role-trusts",
-        "auth-policies",
-        "managed-identities",
+    phase4_checkpoint = {
+      commands = [
+        "automation",
+        "devops",
+        "lighthouse",
+        "cross-tenant",
+        "snapshots-disks",
       ]
-      config = [
-        "arm-deployments",
-        "env-vars",
+      automation = {
+        ops = {
+          certificate_count         = 0
+          connection_count          = 0
+          credential_count          = 0
+          encrypted_variable_count  = 0
+          hybrid_worker_group_count = 0
+          identity_type             = null
+          job_schedule_count        = 0
+          name                      = azurerm_automation_account.phase4.name
+          runbook_count             = 0
+          schedule_count            = 0
+          variable_count            = 0
+          webhook_count             = 0
+        }
+      }
+      devops = {
+        expect_unconfigured_issue_without_org = true
+      }
+      lighthouse = {
+        validation_mode = "evidence-led"
+      }
+      cross_tenant = {
+        validation_mode = "evidence-led"
+      }
+      snapshots_disks = {
+        vm_web_os_disk = {
+          attached_to_name      = azurerm_linux_virtual_machine.vm_web.name
+          attachment_state      = "attached"
+          encryption_type       = "EncryptionAtRestWithPlatformKey"
+          network_access_policy = "AllowAll"
+          os_type               = "Linux"
+          public_network_access = "Enabled"
+        }
+      }
+      known_gaps = [
+        "cross-tenant remains tenant- and permission-dependent, so the lab keeps it evidence-led rather than row-count gated.",
+        "lighthouse remains subscription- and tenant-shaped; promote stronger assertions only if the lab intentionally adds delegated-management proof.",
+        "devops needs a real Azure DevOps organization, project, and pipeline path before it can move past conditional validation of command behavior and truthful issue surfacing.",
+        "automation currently validates the visible zero-object execution posture, but the current AzureFox read path did not return a managed-identity type for the lab-owned Automation account during the April 8, 2026 live pass.",
       ]
-      secrets = [
-        "keyvault",
-        "tokens-credentials",
+    }
+    grouped_follow_up = {
+      command = "chains"
+      implemented_families = [
+        "credential-path",
+        "deployment-path",
+        "escalation-path",
       ]
-      resource = [
-        "resource-trusts",
-        "api-mgmt",
-        "acr",
-        "databases",
-      ]
-      network = [
-        "nics",
-        "dns",
-        "endpoints",
-        "network-ports",
-      ]
-      compute = [
-        "workloads",
-        "app-services",
-        "functions",
-        "aks",
-        "vms",
-      ]
+      validation_mode = "optional-follow-up"
     }
     resource_groups = {
       network  = azurerm_resource_group.network.name
@@ -553,6 +632,80 @@ output "validation_manifest" {
         }
       }
     }
+    viewpoints = {
+      admin = {
+        commands = [
+          "whoami",
+          "inventory",
+          "automation",
+          "devops",
+          "arm-deployments",
+          "env-vars",
+          "tokens-credentials",
+          "rbac",
+          "principals",
+          "permissions",
+          "privesc",
+          "role-trusts",
+          "lighthouse",
+          "cross-tenant",
+          "resource-trusts",
+          "auth-policies",
+          "managed-identities",
+          "keyvault",
+          "storage",
+          "vms",
+          "vmss",
+          "nics",
+          "dns",
+          "endpoints",
+          "network-ports",
+          "workloads",
+          "app-services",
+          "functions",
+          "api-mgmt",
+          "aks",
+          "acr",
+          "databases",
+          "snapshots-disks",
+        ]
+        expected_visibility = "broadest-lab-truth"
+        principal_type      = "User"
+        validation_mode     = "release-gate"
+      }
+      dev = {
+        artifact_subdir     = "dev"
+        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        display_name        = azuread_application.viewpoint_dev.display_name
+        expected_visibility = "scoped-workload-operator"
+        forbidden_roles     = ["Owner"]
+        principal_object_id = azuread_service_principal.viewpoint_dev.object_id
+        principal_type      = "ServicePrincipal"
+        scopes = [
+          {
+            role_name  = azurerm_role_assignment.viewpoint_dev_workload_contributor.role_definition_name
+            scope_kind = "resource-group"
+            scope_name = azurerm_resource_group.workload.name
+          },
+        ]
+      }
+      lower_privilege = {
+        artifact_subdir     = "lower-privilege"
+        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        display_name        = azuread_application.viewpoint_low_priv.display_name
+        expected_visibility = "constrained-workload-reader"
+        forbidden_roles     = ["Owner", "Contributor"]
+        principal_object_id = azuread_service_principal.viewpoint_low_priv.object_id
+        principal_type      = "ServicePrincipal"
+        scopes = [
+          {
+            role_name  = azurerm_role_assignment.viewpoint_low_priv_workload_reader.role_definition_name
+            scope_kind = "resource-group"
+            scope_name = azurerm_resource_group.workload.name
+          },
+        ]
+      }
+    }
     expected_signals = {
       public_storage_default_action  = "Allow"
       private_storage_default_action = "Deny"
@@ -560,6 +713,31 @@ output "validation_manifest" {
       vm_has_public_ip               = true
       vm_identity_name               = azurerm_user_assigned_identity.ua_app.name
       high_privilege_role            = "Owner"
+    }
+  }
+}
+
+output "validation_viewpoints" {
+  description = "Sensitive credentials and login metadata for viewpoint-aware AzureFox validation."
+  sensitive   = true
+  value = {
+    dev = {
+      client_id           = azuread_application.viewpoint_dev.client_id
+      client_secret       = azuread_application_password.viewpoint_dev.value
+      display_name        = azuread_application.viewpoint_dev.display_name
+      principal_object_id = azuread_service_principal.viewpoint_dev.object_id
+      subscription_id     = data.azurerm_subscription.current.subscription_id
+      tenant_id           = data.azurerm_client_config.current.tenant_id
+      viewpoint           = "dev"
+    }
+    lower_privilege = {
+      client_id           = azuread_application.viewpoint_low_priv.client_id
+      client_secret       = azuread_application_password.viewpoint_low_priv.value
+      display_name        = azuread_application.viewpoint_low_priv.display_name
+      principal_object_id = azuread_service_principal.viewpoint_low_priv.object_id
+      subscription_id     = data.azurerm_subscription.current.subscription_id
+      tenant_id           = data.azurerm_client_config.current.tenant_id
+      viewpoint           = "lower-privilege"
     }
   }
 }

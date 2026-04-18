@@ -1,4 +1,4 @@
-# Phase 3.5 Compute, Apps, Network, and DNS Checkpoint
+# Phase 4 Command Discovery Checkpoint
 
 Date: 2026-04-09
 
@@ -7,18 +7,17 @@ stable for every clone of the project.
 
 The fuller working-note copy is also archived in the external reference workspace at:
 
-`/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase3-compute-apps-network-checkpoint-2026-04-08.md`
+`/Users/cfarley/Documents/AzureFox-reference/terraform-labs/phase4-command-discovery-checkpoint-2026-04-08.md`
 
 Use this note as an archive pointer, not as the active release boundary source of truth.
 
-Original checkpoint scope:
+Original captured command lane:
 
-- `storage`
-- `dns`
-- `api-mgmt`
-- `aks`
-- `acr`
-- `databases`
+- `snapshots-disks`
+- `lighthouse`
+- `cross-tenant`
+- `automation`
+- `devops`
 
 Current operator guidance lives in:
 
