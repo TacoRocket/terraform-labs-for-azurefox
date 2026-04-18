@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +57,30 @@ AUTH_POLICY_FINDINGS = {
 }
 
 RUN_MODE_CHOICES = ("full", "commands-only")
+VIEWPOINT_CHOICES = ("admin", "dev", "lower-privilege", "all")
+VIEWPOINT_MANIFEST_KEYS = {
+    "admin": "admin",
+    "dev": "dev",
+    "lower-privilege": "lower_privilege",
+}
+VIEWPOINT_REDUCED_COMMANDS = {
+    "dev": [
+        "whoami",
+        "principals",
+        "permissions",
+        "managed-identities",
+        "workloads",
+        "functions",
+    ],
+    "lower-privilege": [
+        "whoami",
+        "principals",
+        "permissions",
+        "managed-identities",
+        "workloads",
+        "functions",
+    ],
+}
 HEARTBEAT_INTERVAL_SECONDS = 30
 SLOW_COMMAND_NOTES = {
     "role-trusts": (
@@ -102,6 +127,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Validation scope to run: full executes the release-gated standalone command set; "
             "commands-only is an explicit standalone-only rerun mode."
+        ),
+    )
+    parser.add_argument(
+        "--viewpoint",
+        choices=VIEWPOINT_CHOICES,
+        default="admin",
+        help=(
+            "Validation viewpoint to run. admin preserves the current release-gated lane; "
+            "dev and lower-privilege run reduced-visibility footholds; all runs admin plus both reduced lanes."
         ),
     )
     parser.add_argument(
@@ -171,6 +205,16 @@ def selected_commands(skipped_commands: set[str]) -> list[str]:
     return [command for command in COMMANDS if command not in skipped_commands]
 
 
+def viewpoint_commands(viewpoint: str, skipped_commands: set[str]) -> list[str]:
+    if viewpoint == "admin":
+        return selected_commands(skipped_commands)
+    return [
+        command
+        for command in VIEWPOINT_REDUCED_COMMANDS[viewpoint]
+        if command not in skipped_commands
+    ]
+
+
 def read_manifest(lab_dir: Path) -> dict[str, Any]:
     try:
         value = run_json(["tofu", "output", "-json", "validation_manifest"], cwd=lab_dir)
@@ -188,10 +232,106 @@ def read_manifest(lab_dir: Path) -> dict[str, Any]:
     return value
 
 
+def read_sensitive_output(lab_dir: Path, output_name: str) -> dict[str, Any]:
+    try:
+        value = run_json(["tofu", "output", "-json", output_name], cwd=lab_dir)
+    except RuntimeError as exc:
+        message = str(exc)
+        if f'Output "{output_name}" not found' in message:
+            raise RuntimeError(
+                f"{output_name} is not present in the current OpenTofu state. "
+                "Run `tofu apply` for this revision of the lab before using reduced viewpoints."
+            ) from exc
+        raise
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{output_name} output was not a JSON object")
+    return value
+
+
+def read_viewpoint_credentials(lab_dir: Path) -> dict[str, Any]:
+    return read_sensitive_output(lab_dir, "validation_viewpoints")
+
+
+def run_checked(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    progress_label: str | None = None,
+) -> None:
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    started = time.monotonic()
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=HEARTBEAT_INTERVAL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            if progress_label:
+                elapsed = time.monotonic() - started
+                log_progress(f"[wait] {progress_label} still running ({elapsed:.0f}s elapsed)")
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"Command failed ({process.returncode}): {' '.join(cmd)}\n"
+            f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        )
+
+
+def setup_viewpoint_session(
+    *,
+    lab_dir: Path,
+    subscription_id: str,
+    tenant_id: str,
+    credentials: dict[str, Any],
+    viewpoint: str,
+) -> tempfile.TemporaryDirectory[str]:
+    client_id = credentials.get("client_id")
+    client_secret = credentials.get("client_secret")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise RuntimeError(f"{viewpoint} viewpoint is missing a usable client_id")
+    if not isinstance(client_secret, str) or not client_secret.strip():
+        raise RuntimeError(f"{viewpoint} viewpoint is missing a usable client_secret")
+    config_dir = tempfile.TemporaryDirectory(prefix=f"azurefox-{viewpoint}-")
+    env = os.environ.copy()
+    env["AZURE_CONFIG_DIR"] = config_dir.name
+    login_cmd = [
+        "az",
+        "login",
+        "--service-principal",
+        "--username",
+        client_id,
+        "--password",
+        client_secret,
+        "--tenant",
+        tenant_id,
+        "--allow-no-subscriptions",
+    ]
+    run_checked(
+        login_cmd,
+        cwd=lab_dir,
+        env=env,
+        progress_label=f"az login ({viewpoint})",
+    )
+    run_checked(
+        ["az", "account", "set", "--subscription", subscription_id],
+        cwd=lab_dir,
+        env=env,
+        progress_label=f"az account set ({viewpoint})",
+    )
+    return config_dir
+
+
 def write_command_timeline(
     artifacts_dir: Path,
     *,
     mode: str,
+    viewpoint: str,
     subscription_id: str,
     commands: list[str],
     skipped_commands: set[str],
@@ -202,6 +342,7 @@ def write_command_timeline(
     payload = {
         "mode": mode,
         "subscription_id": subscription_id,
+        "viewpoint": viewpoint,
         "validator_started_at_utc": started_at_utc,
         "validator_finished_at_utc": finished_at_utc,
         "requested_commands": commands,
@@ -221,19 +362,24 @@ def run_azurefox(
     subscription_id: str,
     artifacts_dir: Path,
     mode: str,
+    viewpoint: str,
     commands: list[str],
     skipped_commands: set[str],
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Path]]:
     outputs: dict[str, Any] = {}
     loot_paths: dict[str, Path] = {}
     env = os.environ.copy()
     pythonpath = str(azurefox_dir / "src")
     env["PYTHONPATH"] = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else pythonpath
+    if extra_env:
+        env.update(extra_env)
     validator_started_at_utc = utc_timestamp()
     command_runs: list[dict[str, Any]] = []
     write_command_timeline(
         artifacts_dir,
         mode=mode,
+        viewpoint=viewpoint,
         subscription_id=subscription_id,
         commands=commands,
         skipped_commands=skipped_commands,
@@ -290,6 +436,7 @@ def run_azurefox(
                 write_command_timeline(
                     artifacts_dir,
                     mode=mode,
+                    viewpoint=viewpoint,
                     subscription_id=subscription_id,
                     commands=commands,
                     skipped_commands=skipped_commands,
@@ -324,6 +471,7 @@ def run_azurefox(
             write_command_timeline(
                 artifacts_dir,
                 mode=mode,
+                viewpoint=viewpoint,
                 subscription_id=subscription_id,
                 commands=commands,
                 skipped_commands=skipped_commands,
@@ -338,6 +486,7 @@ def run_azurefox(
     write_command_timeline(
         artifacts_dir,
         mode=mode,
+        viewpoint=viewpoint,
         subscription_id=subscription_id,
         commands=commands,
         skipped_commands=skipped_commands,
@@ -351,6 +500,27 @@ def run_azurefox(
 def assert_true(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def has_current_identity_privesc_path(privesc: dict[str, Any]) -> bool:
+    return any(
+        path.get("path_type") == "current-foothold-direct-control"
+        and path.get("current_identity") is True
+        for path in privesc.get("paths", [])
+    )
+
+
+def has_managed_identity_privesc_path(
+    privesc: dict[str, Any],
+    identity_principal_id: str,
+    vm_name: str,
+) -> bool:
+    return any(
+        path.get("path_type") == "ingress-backed-workload-identity"
+        and path.get("principal_id") == identity_principal_id
+        and path.get("asset") == vm_name
+        for path in privesc.get("paths", [])
+    )
 
 
 def normalize_principal_type(value: str | None) -> str:
@@ -726,20 +896,12 @@ def validate_outputs(
 
         privesc = outputs["privesc"]
         assert_true(
-            any(
-                path.get("path_type") == "direct-role-abuse" and path.get("current_identity") is True
-                for path in privesc.get("paths", [])
-            ),
-            "privesc output missing direct-role-abuse path for the current identity",
+            has_current_identity_privesc_path(privesc),
+            "privesc output missing current-foothold-direct-control path for the current identity",
         )
         assert_true(
-            any(
-                path.get("path_type") == "public-identity-pivot"
-                and path.get("principal_id") == identity_principal_id
-                and path.get("asset") == vm_name
-                for path in privesc.get("paths", [])
-            ),
-            "privesc output missing the public managed-identity pivot path",
+            has_managed_identity_privesc_path(privesc, identity_principal_id, vm_name),
+            "privesc output missing the ingress-backed workload identity path",
         )
         checks.append("privesc surfaced both the current privileged identity and the public managed-identity pivot")
 
@@ -1703,9 +1865,112 @@ def validate_outputs(
     return checks, mismatches, follow_ups
 
 
+def validate_viewpoint_outputs(
+    manifest: dict[str, Any],
+    viewpoint: str,
+    outputs: dict[str, Any],
+    loot_paths: dict[str, Path],
+    executed_commands: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    manifest_key = VIEWPOINT_MANIFEST_KEYS[viewpoint]
+    viewpoint_manifest = (manifest.get("viewpoints") or {}).get(manifest_key)
+    if not isinstance(viewpoint_manifest, dict):
+        raise AssertionError(f"validation_manifest is missing viewpoint metadata for '{viewpoint}'")
+
+    checks: list[str] = []
+    mismatches: list[str] = []
+    follow_ups: list[str] = []
+
+    whoami = outputs["whoami"]
+    current_principal = whoami.get("principal", {})
+    expected_principal_id = viewpoint_manifest["principal_object_id"]
+    assert_true(whoami["metadata"]["command"] == "whoami", "whoami metadata.command mismatch")
+    assert_true(whoami["subscription"]["id"] == manifest["subscription_id"], "whoami subscription mismatch")
+    assert_true(current_principal.get("id") == expected_principal_id, f"{viewpoint} whoami principal mismatch")
+    assert_true(
+        normalize_principal_type(current_principal.get("principal_type"))
+        == normalize_principal_type(viewpoint_manifest["principal_type"]),
+        f"{viewpoint} whoami principal_type mismatch",
+    )
+    checks.append(f"whoami matched the {viewpoint} viewpoint identity and subscription")
+
+    principals = outputs["principals"]
+    principal_row = find_principal(principals, expected_principal_id)
+    principal_type = normalize_principal_type(principal_row.get("principal_type"))
+    expected_type = normalize_principal_type(viewpoint_manifest["principal_type"])
+    assert_true(principal_type == expected_type, f"{viewpoint} principals principal_type mismatch")
+    checks.append(f"principals kept the {viewpoint} viewpoint principal visible without admin-only assumptions")
+
+    permissions = outputs["permissions"]
+    permission_row = find_permission(permissions, expected_principal_id)
+    forbidden_roles = {str(value) for value in viewpoint_manifest.get("forbidden_roles", [])}
+    expected_roles = {
+        str(scope.get("role_name"))
+        for scope in viewpoint_manifest.get("scopes", [])
+        if scope.get("role_name")
+    }
+    visible_roles = {str(value) for value in permission_row.get("all_role_names", [])}
+    visible_high_impact_roles = {str(value) for value in permission_row.get("high_impact_roles", [])}
+    assert_true(
+        expected_roles <= visible_roles,
+        f"{viewpoint} permissions missing expected scoped roles: {sorted(expected_roles - visible_roles)}",
+    )
+    assert_true(
+        not (forbidden_roles & visible_high_impact_roles),
+        f"{viewpoint} permissions unexpectedly surfaced forbidden high-impact roles: {sorted(forbidden_roles & visible_high_impact_roles)}",
+    )
+    if viewpoint == "lower-privilege":
+        assert_true(
+            permission_row.get("privileged") is False,
+            f"{viewpoint} permissions unexpectedly marked the reduced viewpoint as privileged",
+        )
+        checks.append(f"permissions kept the {viewpoint} viewpoint scoped and non-owner")
+    else:
+        checks.append(f"permissions surfaced the scoped {sorted(expected_roles)} foothold for the {viewpoint} viewpoint")
+
+    if "managed-identities" in executed_commands:
+        identity = find_identity(outputs["managed-identities"], manifest["managed_identity"]["name"])
+        attached_assets = {attached.split("/")[-1] for attached in identity.get("attached_to", [])}
+        assert_true(
+            manifest["vm"]["name"] in attached_assets,
+            f"{viewpoint} managed-identities lost the workload attachment for {manifest['vm']['name']}",
+        )
+        checks.append(f"managed-identities kept the workload-attached identity visible for the {viewpoint} viewpoint")
+
+    if "workloads" in executed_commands:
+        expected_assets = manifest["phase3_checkpoint"]["workloads"]["expected_assets"]
+        for expected in expected_assets:
+            workload = find_workload(outputs["workloads"], expected["asset_name"])
+            assert_true(
+                workload.get("asset_kind") == expected["asset_kind"],
+                f"{viewpoint} workloads asset kind mismatch for '{expected['asset_name']}'",
+            )
+        checks.append(f"workloads still surfaced the shared lab assets from the {viewpoint} foothold")
+
+    if "functions" in executed_commands:
+        expected_function = manifest["phase3_checkpoint"]["functions"]["orders"]
+        function_app = find_function_app(outputs["functions"], expected_function["name"])
+        assert_true(
+            function_app.get("default_hostname") == expected_function["default_hostname"],
+            f"{viewpoint} functions default hostname mismatch",
+        )
+        assert_true(
+            function_app.get("public_network_access") == expected_function["public_network_access"],
+            f"{viewpoint} functions public network access mismatch",
+        )
+        checks.append(f"functions preserved the Function App asset view for the {viewpoint} foothold")
+
+    for command in executed_commands:
+        assert_true(loot_paths.get(command, Path()).exists(), f"{viewpoint} {command} loot artifact missing")
+    checks.append(f"all {viewpoint} viewpoint command runs returned JSON payloads and emitted loot artifacts")
+
+    return checks, mismatches, follow_ups
+
+
 def write_summary(
     artifacts_dir: Path,
     mode: str,
+    viewpoint: str,
     checks: list[str],
     mismatches: list[str],
     follow_ups: list[str],
@@ -1716,13 +1981,14 @@ def write_summary(
         "mismatches": mismatches,
         "mode": mode,
         "status": "pass",
+        "viewpoint": viewpoint,
     }
     (artifacts_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
-    lines = [f"AzureFox lab validation passed ({mode}).", ""]
+    lines = [f"AzureFox lab validation passed ({mode}, {viewpoint}).", ""]
     lines.append("Checks:")
     lines.extend(f"- {check}" for check in checks)
     lines.append("")
@@ -1775,6 +2041,12 @@ def write_summary(
     )
 
 
+def artifacts_dir_for_viewpoint(base_dir: Path, viewpoint: str, *, multi_viewpoint: bool) -> Path:
+    if viewpoint == "admin" and not multi_viewpoint:
+        return base_dir
+    return base_dir / "viewpoints" / viewpoint
+
+
 def main() -> int:
     args = parse_args()
     lab_dir = args.lab_dir.resolve()
@@ -1787,30 +2059,110 @@ def main() -> int:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     log_progress(f"[info] validation mode: {args.mode}")
+    log_progress(f"[info] validation viewpoint: {args.viewpoint}")
     log_progress(f"[info] artifacts directory: {artifacts_dir}")
     skipped_commands = set(args.skip_command)
     if skipped_commands:
         log_progress(f"[info] skipped standalone commands: {', '.join(sorted(skipped_commands))}")
+    if args.viewpoint != "admin" and args.mode == "full":
+        raise RuntimeError(
+            "--mode full remains the admin release gate. "
+            "Use --mode commands-only for dev or lower-privilege, or use --viewpoint all to run admin plus reduced lanes together."
+        )
     manifest = read_manifest(lab_dir)
-    commands = selected_commands(skipped_commands)
-    outputs, loot_paths = run_azurefox(
-        azurefox_dir=azurefox_dir,
-        python_bin=args.python,
-        subscription_id=manifest["subscription_id"],
-        artifacts_dir=artifacts_dir,
-        mode=args.mode,
-        commands=commands,
-        skipped_commands=skipped_commands,
+
+    viewpoints_to_run = (
+        ["admin", "dev", "lower-privilege"]
+        if args.viewpoint == "all"
+        else [args.viewpoint]
     )
-    checks, mismatches, follow_ups = validate_outputs(
-        manifest,
-        args.mode,
-        outputs,
-        loot_paths,
-        commands,
-        skipped_commands,
-    )
-    write_summary(artifacts_dir, args.mode, checks, mismatches, follow_ups)
+    viewpoint_credentials = read_viewpoint_credentials(lab_dir) if any(
+        viewpoint != "admin" for viewpoint in viewpoints_to_run
+    ) else {}
+    multi_viewpoint = len(viewpoints_to_run) > 1
+    overall_results: list[dict[str, Any]] = []
+
+    for viewpoint in viewpoints_to_run:
+        effective_mode = args.mode if viewpoint == "admin" else "commands-only"
+        viewpoint_artifacts_dir = artifacts_dir_for_viewpoint(
+            artifacts_dir,
+            viewpoint,
+            multi_viewpoint=multi_viewpoint or viewpoint != "admin",
+        )
+        viewpoint_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        commands = viewpoint_commands(viewpoint, skipped_commands)
+        extra_env: dict[str, str] | None = None
+        temp_config: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            if viewpoint != "admin":
+                credential_key = VIEWPOINT_MANIFEST_KEYS[viewpoint]
+                temp_config = setup_viewpoint_session(
+                    lab_dir=lab_dir,
+                    subscription_id=manifest["subscription_id"],
+                    tenant_id=manifest["tenant_id"],
+                    credentials=viewpoint_credentials[credential_key],
+                    viewpoint=viewpoint,
+                )
+                extra_env = {"AZURE_CONFIG_DIR": temp_config.name}
+
+            outputs, loot_paths = run_azurefox(
+                azurefox_dir=azurefox_dir,
+                python_bin=args.python,
+                subscription_id=manifest["subscription_id"],
+                artifacts_dir=viewpoint_artifacts_dir,
+                mode=effective_mode,
+                viewpoint=viewpoint,
+                commands=commands,
+                skipped_commands=skipped_commands,
+                extra_env=extra_env,
+            )
+            if viewpoint == "admin":
+                checks, mismatches, follow_ups = validate_outputs(
+                    manifest,
+                    effective_mode,
+                    outputs,
+                    loot_paths,
+                    commands,
+                    skipped_commands,
+                )
+            else:
+                checks, mismatches, follow_ups = validate_viewpoint_outputs(
+                    manifest,
+                    viewpoint,
+                    outputs,
+                    loot_paths,
+                    commands,
+                )
+            write_summary(viewpoint_artifacts_dir, effective_mode, viewpoint, checks, mismatches, follow_ups)
+            overall_results.append(
+                {
+                    "artifacts_dir": str(viewpoint_artifacts_dir),
+                    "checks": checks,
+                    "mismatches": mismatches,
+                    "mode": effective_mode,
+                    "status": "pass",
+                    "viewpoint": viewpoint,
+                }
+            )
+        finally:
+            if temp_config is not None:
+                temp_config.cleanup()
+
+    if multi_viewpoint:
+        (artifacts_dir / "viewpoint-summary.json").write_text(
+            json.dumps({"results": overall_results}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        summary_lines = ["AzureFox viewpoint validation completed.", ""]
+        for result in overall_results:
+            summary_lines.append(
+                f"- {result['viewpoint']}: pass ({result['mode']}) -> {result['artifacts_dir']}"
+            )
+        (artifacts_dir / "viewpoint-summary.txt").write_text(
+            "\n".join(summary_lines) + "\n",
+            encoding="utf-8",
+        )
+
     print(f"Validation complete. Artifacts written to {artifacts_dir}")
     return 0
 

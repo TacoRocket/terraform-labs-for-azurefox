@@ -15,6 +15,8 @@ locals {
   function_storage_name          = substr("st${local.sanitized_prefix}func${local.unique_suffix}", 0, 24)
   roletrust_api_name             = "af-roletrust-api"
   roletrust_client_name          = "af-roletrust-client"
+  viewpoint_dev_name             = "af-viewpoint-dev"
+  viewpoint_low_priv_name        = "af-viewpoint-lowpriv"
   keyvault_open_name             = substr("kvlabopen01${local.unique_suffix}", 0, 24)
   keyvault_private_name          = substr("kvlabpriv01${local.unique_suffix}", 0, 24)
   keyvault_deny_name             = substr("kvlabdeny01${local.unique_suffix}", 0, 24)
@@ -256,6 +258,54 @@ resource "azuread_app_role_assignment" "roletrust_client_to_api" {
   app_role_id         = local.roletrust_api_app_role_id
   principal_object_id = azuread_service_principal.roletrust_client.object_id
   resource_object_id  = azuread_service_principal.roletrust_api.object_id
+}
+
+resource "azuread_application" "viewpoint_dev" {
+  display_name     = local.viewpoint_dev_name
+  owners           = [data.azuread_client_config.current.object_id]
+  sign_in_audience = "AzureADMyOrg"
+}
+
+resource "azuread_service_principal" "viewpoint_dev" {
+  client_id                    = azuread_application.viewpoint_dev.client_id
+  app_role_assignment_required = false
+  owners                       = [data.azuread_client_config.current.object_id]
+}
+
+resource "azuread_application_password" "viewpoint_dev" {
+  application_id = azuread_application.viewpoint_dev.id
+  display_name   = "validator-dev"
+  end_date       = "2099-01-01T00:00:00Z"
+}
+
+resource "azuread_application" "viewpoint_low_priv" {
+  display_name     = local.viewpoint_low_priv_name
+  owners           = [data.azuread_client_config.current.object_id]
+  sign_in_audience = "AzureADMyOrg"
+}
+
+resource "azuread_service_principal" "viewpoint_low_priv" {
+  client_id                    = azuread_application.viewpoint_low_priv.client_id
+  app_role_assignment_required = false
+  owners                       = [data.azuread_client_config.current.object_id]
+}
+
+resource "azuread_application_password" "viewpoint_low_priv" {
+  application_id = azuread_application.viewpoint_low_priv.id
+  display_name   = "validator-low-privilege"
+  end_date       = "2099-01-01T00:00:00Z"
+}
+
+resource "azurerm_role_assignment" "viewpoint_dev_workload_contributor" {
+  scope                = azurerm_resource_group.workload.id
+  role_definition_name = "Contributor"
+  principal_id         = azuread_service_principal.viewpoint_dev.object_id
+}
+
+resource "azurerm_role_assignment" "viewpoint_low_priv_workload_reader" {
+  scope                = azurerm_resource_group.workload.id
+  role_definition_name = "Reader"
+  principal_id         = azuread_service_principal.viewpoint_low_priv.object_id
 }
 
 resource "azurerm_linux_virtual_machine" "vm_web" {
@@ -733,6 +783,7 @@ resource "azurerm_kubernetes_cluster" "phase3" {
   location                          = azurerm_resource_group.workload.location
   resource_group_name               = azurerm_resource_group.workload.name
   dns_prefix                        = local.phase3_aks_dns_prefix
+  oidc_issuer_enabled               = true
   role_based_access_control_enabled = true
   sku_tier                          = "Free"
   tags                              = local.tags

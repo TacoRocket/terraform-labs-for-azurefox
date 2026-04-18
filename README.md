@@ -309,9 +309,27 @@ By default the validator:
 - reads `tofu output -json validation_manifest`
 - executes AzureFox from `--azurefox-dir`
 - runs in `--mode full`, which executes the current release-gated standalone AzureFox command set
+- treats that default `--mode full` lane as the admin proof path
 - prints progress lines before and after each AzureFox step, including elapsed time and target artifact directories
 - records per-command UTC start and finish timestamps plus elapsed duration in `command-timeline.json`
 - stores proof artifacts under `proof-artifacts/latest`
+
+Viewpoint-aware validation is now available for the same shared lab:
+
+- `admin` keeps the current broad release gate and should see the fullest lab truth
+- `dev` uses a scoped workload `Contributor` service principal and should still return useful workload-facing output without subscription-wide truth
+- `lower-privilege` uses a workload `Reader` service principal and should still return honest partial visibility instead of misleading emptiness
+
+Reduced viewpoints intentionally run a smaller command lane:
+
+- `whoami`
+- `principals`
+- `permissions`
+- `managed-identities`
+- `workloads`
+- `functions`
+
+Those reduced lanes are there to prove honest behavior under narrower footholds, not to replace the admin release gate.
 
 For richer `devops` proof, point AzureFox at a real Azure DevOps organization before you run the validator:
 
@@ -333,12 +351,18 @@ Useful scoped reruns:
 python3 scripts/validate_azurefox_lab.py --mode commands-only
 python3 scripts/validate_azurefox_lab.py --mode full
 python3 scripts/validate_azurefox_lab.py --mode full --skip-command role-trusts
+python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint dev
+python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint lower-privilege
+python3 scripts/validate_azurefox_lab.py --viewpoint all
 ```
 
 Runtime notes:
 
 - use `--mode full` as the single end-to-end validation run
 - `commands-only` is now just an explicit standalone-only rerun alias for the same command family as `full`
+- `--viewpoint admin` is the default and preserves the existing release-gated artifact layout
+- `--viewpoint dev` and `--viewpoint lower-privilege` require `--mode commands-only`; they use sensitive OpenTofu outputs plus isolated `AZURE_CONFIG_DIR` sessions so the validator does not overwrite the operator's main Azure CLI login
+- `--viewpoint all` runs the admin lane plus both reduced viewpoints together and writes reduced-lane artifacts under `proof-artifacts/latest/viewpoints/`
 - if the live lab is already up and you only changed outputs or validator expectations, refresh the
   OpenTofu state before rerunning validation so stale `validation_manifest` data does not cause a
   false mismatch
@@ -358,6 +382,7 @@ Artifacts include:
 - `command-timeline.json`
 - `summary.json`
 - `summary.txt`
+- when you run multiple viewpoints together, one subfolder per viewpoint plus `viewpoint-summary.json` and `viewpoint-summary.txt`
 - `azurefox-mismatch-report.md`
 - `identity-mismatch-report.md`
 - `azurefox-follow-up-items.md`

@@ -436,7 +436,7 @@ output "validation_manifest" {
           agent_pool_count      = 1
           cluster_identity_type = "SystemAssigned"
           name                  = azurerm_kubernetes_cluster.phase3.name
-          oidc_issuer_enabled   = false
+          oidc_issuer_enabled   = true
         }
       }
       acr = {
@@ -632,6 +632,80 @@ output "validation_manifest" {
         }
       }
     }
+    viewpoints = {
+      admin = {
+        commands = [
+          "whoami",
+          "inventory",
+          "automation",
+          "devops",
+          "arm-deployments",
+          "env-vars",
+          "tokens-credentials",
+          "rbac",
+          "principals",
+          "permissions",
+          "privesc",
+          "role-trusts",
+          "lighthouse",
+          "cross-tenant",
+          "resource-trusts",
+          "auth-policies",
+          "managed-identities",
+          "keyvault",
+          "storage",
+          "vms",
+          "vmss",
+          "nics",
+          "dns",
+          "endpoints",
+          "network-ports",
+          "workloads",
+          "app-services",
+          "functions",
+          "api-mgmt",
+          "aks",
+          "acr",
+          "databases",
+          "snapshots-disks",
+        ]
+        expected_visibility = "broadest-lab-truth"
+        principal_type      = "User"
+        validation_mode     = "release-gate"
+      }
+      dev = {
+        artifact_subdir     = "dev"
+        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        display_name        = azuread_application.viewpoint_dev.display_name
+        expected_visibility = "scoped-workload-operator"
+        forbidden_roles     = ["Owner"]
+        principal_object_id = azuread_service_principal.viewpoint_dev.object_id
+        principal_type      = "ServicePrincipal"
+        scopes = [
+          {
+            role_name  = azurerm_role_assignment.viewpoint_dev_workload_contributor.role_definition_name
+            scope_kind = "resource-group"
+            scope_name = azurerm_resource_group.workload.name
+          },
+        ]
+      }
+      lower_privilege = {
+        artifact_subdir     = "lower-privilege"
+        commands            = ["whoami", "principals", "permissions", "managed-identities", "workloads", "functions"]
+        display_name        = azuread_application.viewpoint_low_priv.display_name
+        expected_visibility = "constrained-workload-reader"
+        forbidden_roles     = ["Owner", "Contributor"]
+        principal_object_id = azuread_service_principal.viewpoint_low_priv.object_id
+        principal_type      = "ServicePrincipal"
+        scopes = [
+          {
+            role_name  = azurerm_role_assignment.viewpoint_low_priv_workload_reader.role_definition_name
+            scope_kind = "resource-group"
+            scope_name = azurerm_resource_group.workload.name
+          },
+        ]
+      }
+    }
     expected_signals = {
       public_storage_default_action  = "Allow"
       private_storage_default_action = "Deny"
@@ -639,6 +713,31 @@ output "validation_manifest" {
       vm_has_public_ip               = true
       vm_identity_name               = azurerm_user_assigned_identity.ua_app.name
       high_privilege_role            = "Owner"
+    }
+  }
+}
+
+output "validation_viewpoints" {
+  description = "Sensitive credentials and login metadata for viewpoint-aware AzureFox validation."
+  sensitive   = true
+  value = {
+    dev = {
+      client_id           = azuread_application.viewpoint_dev.client_id
+      client_secret       = azuread_application_password.viewpoint_dev.value
+      display_name        = azuread_application.viewpoint_dev.display_name
+      principal_object_id = azuread_service_principal.viewpoint_dev.object_id
+      subscription_id     = data.azurerm_subscription.current.subscription_id
+      tenant_id           = data.azurerm_client_config.current.tenant_id
+      viewpoint           = "dev"
+    }
+    lower_privilege = {
+      client_id           = azuread_application.viewpoint_low_priv.client_id
+      client_secret       = azuread_application_password.viewpoint_low_priv.value
+      display_name        = azuread_application.viewpoint_low_priv.display_name
+      principal_object_id = azuread_service_principal.viewpoint_low_priv.object_id
+      subscription_id     = data.azurerm_subscription.current.subscription_id
+      tenant_id           = data.azurerm_client_config.current.tenant_id
+      viewpoint           = "lower-privilege"
     }
   }
 }

@@ -26,9 +26,10 @@ Use this before tagging a lab release candidate.
 
 - `validation_manifest` still matches the OpenTofu-produced lab shape.
 - `scripts/validate_azurefox_lab.py` still validates the intended AzureFox command set.
-- `--mode full` and `--mode commands-only` both behave as documented.
+- `--mode full`, `--mode commands-only`, and `--viewpoint admin|dev|lower-privilege|all` all behave as documented.
 - `--mode full` remains the single end-to-end validation gate for release readiness.
 - `--mode commands-only` is only an explicit standalone rerun alias rather than a separate release gate.
+- reduced viewpoints still prove honest partial visibility from the same shared lab instead of being treated as empty-state failures.
 - proof artifacts are written deterministically enough for operator review.
 - mismatch and follow-up reports stay evidence-based instead of normalizing live drift.
 - tenant-shaped or external-config-shaped commands stay honest about their limits:
@@ -40,6 +41,7 @@ Use this before tagging a lab release candidate.
 - `tofu init`, `tofu plan`, and `tofu apply` succeed in a disposable subscription.
 - `python3 scripts/validate_azurefox_lab.py --mode full` completes successfully against the applied
   environment.
+- `python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint all` completes successfully against the applied environment and writes separate `admin`, `dev`, and `lower-privilege` artifact folders.
 - the operator followed [live-run-strategy.md](/Users/cfarley/Documents/Terraform Labs for AzureFox/docs/live-run-strategy.md)
   so Key Vault replacement and `role-trusts` waits were treated as known slow paths instead of ad
   hoc failures.
