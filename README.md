@@ -90,12 +90,12 @@ Operator run docs:
 
 Current release boundary:
 
-- this repo now targets AzureFox `1.3.0` as the current parity boundary
+- this repo now targets AzureFox `1.5.0` as the current parity boundary
 - deterministic lab-backed proof now includes `snapshots-disks`, `vmss`, and one Automation account
 - `lighthouse` and `cross-tenant` are validated as evidence-led tenant surfaces rather than fixed row-count proof
 - `devops` now has three lab-owned YAML canaries once a real Azure DevOps org/project/repo context is provided:
   root YAML, same-repo template follow, and named-target App Service join
-- grouped `chains` follow-up remains optional here; Firefox/AzureFox `1.3.0` added more live-proof-aware `credential-path` wording, but this lab still treats grouped chain output as secondary to the standalone validation gate
+- grouped `chains` follow-up remains optional here; AzureFox `1.5.0` added stricter grouped-source reuse and stronger live DevOps/YAML proof, but this lab still treats grouped chain output as secondary to the standalone validation gate
 
 ## Lab Shape
 
