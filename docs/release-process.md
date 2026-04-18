@@ -62,10 +62,14 @@ reliable, not try to hide it behind thin automation that obscures what is being 
    tofu plan
    tofu apply
    python3 scripts/validate_azurefox_lab.py --mode full
+   python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint all
    tofu destroy
    ```
    Preserve `proof-artifacts/latest/command-timeline.json` from that validation pass as part of the
    release-candidate proof set.
+   Treat the reduced viewpoints as additional proof lanes, not as replacements for the admin gate:
+   `--mode full` remains the release-readiness path, while `--viewpoint all` confirms the same lab
+   still behaves honestly from `admin`, `dev`, and `lower-privilege` footholds.
    After `tofu destroy`, verify in Azure that the tagged lab footprint is actually gone before you
    call teardown complete:
    ```bash
