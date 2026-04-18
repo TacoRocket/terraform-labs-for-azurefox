@@ -1,7 +1,7 @@
 # AzureFox OpenTofu Proof Lab
 
 <p align="center">
-  <img src="docs/branding/opentofuazurefox.png" alt="AzureFox OpenTofu Proof Lab logo" width="320" />
+  <img src="docs/branding/terraform-labs-for-azurefox-logo.png" alt="AzureFox OpenTofu Proof Lab logo" height="280" />
 </p>
 
 This repo contains the OpenTofu lab environment for AzureFox.
@@ -62,9 +62,12 @@ Current validator coverage:
 - `endpoints`
 - `network-ports`
 - `network-effective`
+- `application-gateway`
 - `workloads`
 - `app-services`
 - `functions`
+- `container-apps`
+- `container-instances`
 - `api-mgmt`
 - `aks`
 - `acr`
@@ -80,13 +83,10 @@ Optional grouped follow-up:
 The project is OpenTofu-first, but the HCL stays close to standard Terraform style so it feels
 familiar to most operators.
 
-Current checkpoint notes:
+Operator run docs:
 
 - `docs/activity-log-bundles.md`
 - `docs/live-run-strategy.md`
-- `docs/phase2-secrets-config-resource-checkpoint.md`
-- `docs/phase3-compute-apps-network-checkpoint.md`
-- `docs/phase4-command-discovery-checkpoint.md`
 
 Current release boundary:
 
@@ -119,7 +119,10 @@ Current release boundary:
 - One Linux App Service with a system-assigned identity and a plain-text sensitive setting
 - One Linux Function App with system-assigned plus user-assigned identity and a Key Vault-backed app setting
 - One Linux App Service with attached identity and empty app settings
+- One public Azure Container Instance with a public IP, FQDN, and user-assigned identity
+- One Container Apps environment with one externally reachable Container App that reuses the lab identity
 - One subnet-level NSG allow rule on the workload subnet so `network-ports` has explicit public-ingress evidence for the public VM
+- One dedicated App Gateway subnet plus one public WAF-backed Application Gateway that routes to the public App Service
 - One API Management service with a system-assigned identity plus one API, one backend, and one named value
 - One AKS cluster with a public control-plane endpoint and system-assigned identity
 - One Azure Container Registry with public network access and admin user enabled
@@ -154,9 +157,12 @@ With this setup, AzureFox should surface:
 - public IP and Azure-managed hostname visibility from `endpoints`
 - NIC-backed public ingress evidence from `network-ports`
 - effective public-IP exposure triage from `network-effective`
+- Application Gateway public edge, routing depth, backend target count, and WAF attachment from `application-gateway`
 - a joined compute plus web workload census from `workloads`
 - App Service hostname, identity, and posture inventory from `app-services`
 - Function App hostname, identity, and deployment-signal inventory from `functions`
+- Container App hostname, ingress posture, environment anchor, and identity context from `container-apps`
+- Container Instance public endpoint, runtime posture, exposed ports, and identity context from `container-instances`
 - API Management hostname, identity, subscription, named-value, and backend-host depth from `api-mgmt`
 - AKS control-plane endpoint, agent-pool count, OIDC posture, and addon visibility from `aks`
 - ACR login-server, admin-user, webhook, replication, and policy posture from `acr`
@@ -322,16 +328,9 @@ Viewpoint-aware validation is now available for the same shared lab:
 - `dev` uses a scoped workload `Contributor` service principal and should still return useful workload-facing output without subscription-wide truth
 - `lower-privilege` uses a workload `Reader` service principal and should still return honest partial visibility instead of misleading emptiness
 
-Reduced viewpoints intentionally run a smaller command lane:
+Reduced viewpoints now run the same standalone command surface as `admin`.
 
-- `whoami`
-- `principals`
-- `permissions`
-- `managed-identities`
-- `workloads`
-- `functions`
-
-Those reduced lanes are there to prove honest behavior under narrower footholds, not to replace the admin release gate.
+Those reduced lanes are there to prove honest behavior under narrower footholds across the broader AzureFox command set, not to replace the admin release gate.
 
 For richer `devops` proof, point AzureFox at a real Azure DevOps organization before you run the validator:
 
@@ -353,8 +352,8 @@ Useful scoped reruns:
 python3 scripts/validate_azurefox_lab.py --mode commands-only
 python3 scripts/validate_azurefox_lab.py --mode full
 python3 scripts/validate_azurefox_lab.py --mode full --skip-command role-trusts
-python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint dev
-python3 scripts/validate_azurefox_lab.py --mode commands-only --viewpoint lower-privilege
+python3 scripts/validate_azurefox_lab.py --mode full --viewpoint dev
+python3 scripts/validate_azurefox_lab.py --mode full --viewpoint lower-privilege
 python3 scripts/validate_azurefox_lab.py --viewpoint all
 ```
 
@@ -363,7 +362,7 @@ Runtime notes:
 - use `--mode full` as the single end-to-end validation run
 - `commands-only` is now just an explicit standalone-only rerun alias for the same command family as `full`
 - `--viewpoint admin` is the default and preserves the existing release-gated artifact layout
-- `--viewpoint dev` and `--viewpoint lower-privilege` require `--mode commands-only`; they use sensitive OpenTofu outputs plus isolated `AZURE_CONFIG_DIR` sessions so the validator does not overwrite the operator's main Azure CLI login
+- `--viewpoint dev` and `--viewpoint lower-privilege` now run the same standalone command surface under isolated `AZURE_CONFIG_DIR` sessions so the validator does not overwrite the operator's main Azure CLI login
 - `--viewpoint all` runs the admin lane plus both reduced viewpoints together and writes reduced-lane artifacts under `proof-artifacts/latest/viewpoints/`
 - if the live lab is already up and you only changed outputs or validator expectations, refresh the
   OpenTofu state before rerunning validation so stale `validation_manifest` data does not cause a
@@ -484,19 +483,6 @@ The practical differences to keep in mind are:
 - Some new or recently upgraded Azure subscriptions return `NotAvailableForSubscription` for small VM families even across multiple regions.
 - The current repo defaults use `Standard_D2s_v3` in `centralus` because that combination was verified as deployable for this subscription during bring-up.
 - For public release, revisit quotas/SKU access and move back to smaller defaults when possible.
-
-## Release Prep
-
-Release-prep guidance lives in:
-
-- `VERSION`
-- `CHANGELOG.md`
-- `docs/release-process.md`
-- `docs/release-readiness-checklist.md`
-
-Use those docs to keep release decisions repeatable. In this repo, release readiness is mostly about
-deployability, validation quality, artifact quality, and clear quota or cost guidance. Release tags
-here should mirror AzureFox's exact version number.
 
 ## License
 

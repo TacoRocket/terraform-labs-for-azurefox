@@ -40,9 +40,12 @@ COMMANDS = [
     "endpoints",
     "network-ports",
     "network-effective",
+    "application-gateway",
     "workloads",
     "app-services",
     "functions",
+    "container-apps",
+    "container-instances",
     "api-mgmt",
     "aks",
     "acr",
@@ -63,24 +66,6 @@ VIEWPOINT_MANIFEST_KEYS = {
     "admin": "admin",
     "dev": "dev",
     "lower-privilege": "lower_privilege",
-}
-VIEWPOINT_REDUCED_COMMANDS = {
-    "dev": [
-        "whoami",
-        "principals",
-        "permissions",
-        "managed-identities",
-        "workloads",
-        "functions",
-    ],
-    "lower-privilege": [
-        "whoami",
-        "principals",
-        "permissions",
-        "managed-identities",
-        "workloads",
-        "functions",
-    ],
 }
 HEARTBEAT_INTERVAL_SECONDS = 30
 SLOW_COMMAND_NOTES = {
@@ -136,7 +121,8 @@ def parse_args() -> argparse.Namespace:
         default="admin",
         help=(
             "Validation viewpoint to run. admin preserves the current release-gated lane; "
-            "dev and lower-privilege run reduced-visibility footholds; all runs admin plus both reduced lanes."
+            "dev and lower-privilege run reduced-visibility footholds across the same standalone command "
+            "surface; all runs admin plus both reduced lanes."
         ),
     )
     parser.add_argument(
@@ -207,13 +193,7 @@ def selected_commands(skipped_commands: set[str]) -> list[str]:
 
 
 def viewpoint_commands(viewpoint: str, skipped_commands: set[str]) -> list[str]:
-    if viewpoint == "admin":
-        return selected_commands(skipped_commands)
-    return [
-        command
-        for command in VIEWPOINT_REDUCED_COMMANDS[viewpoint]
-        if command not in skipped_commands
-    ]
+    return selected_commands(skipped_commands)
 
 
 def read_manifest(lab_dir: Path) -> dict[str, Any]:
@@ -528,6 +508,10 @@ def normalize_principal_type(value: str | None) -> str:
     return (value or "").replace("_", "").replace("-", "").lower()
 
 
+def normalize_resource_id(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
 def find_storage_asset(payload: dict[str, Any], name: str) -> dict[str, Any]:
     for asset in payload.get("storage_assets", []):
         if asset.get("name") == name:
@@ -682,6 +666,54 @@ def validate_network_effective_output(
     )
 
 
+def find_application_gateway(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("application_gateways", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"application-gateway output missing asset '{name}'")
+
+
+def validate_application_gateway_output(
+    phase3_manifest: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    expected_gateway = phase3_manifest["application_gateway"]["edge"]
+    gateway = find_application_gateway(payload, expected_gateway["name"])
+    assert_true(
+        gateway.get("public_frontend_count") == expected_gateway["public_frontend_count"],
+        "application-gateway public frontend count mismatch",
+    )
+    assert_true(
+        gateway.get("listener_count") == expected_gateway["listener_count"],
+        "application-gateway listener count mismatch",
+    )
+    assert_true(
+        gateway.get("request_routing_rule_count") == expected_gateway["request_routing_rule_count"],
+        "application-gateway request routing rule count mismatch",
+    )
+    assert_true(
+        gateway.get("backend_pool_count") == expected_gateway["backend_pool_count"],
+        "application-gateway backend pool count mismatch",
+    )
+    assert_true(
+        gateway.get("backend_target_count") == expected_gateway["backend_target_count"],
+        "application-gateway backend target count mismatch",
+    )
+    assert_true(
+        gateway.get("waf_mode") in (None, "", expected_gateway["waf_mode"]),
+        "application-gateway WAF mode mismatch",
+    )
+    assert_true(
+        normalize_resource_id(gateway.get("firewall_policy_id"))
+        == normalize_resource_id(expected_gateway["firewall_policy_id"]),
+        "application-gateway firewall policy mismatch",
+    )
+    return (
+        "application-gateway surfaced the public edge, routing depth, backend target shape, "
+        "and WAF attachment without inventing live traffic proof"
+    )
+
+
 def find_workload(payload: dict[str, Any], asset_name: str) -> dict[str, Any]:
     for workload in payload.get("workloads", []):
         if workload.get("asset_name") == asset_name:
@@ -708,6 +740,92 @@ def find_function_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
         if asset.get("name") == name:
             return asset
     raise AssertionError(f"functions output missing asset '{name}'")
+
+
+def find_container_app(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("container_apps", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"container-apps output missing asset '{name}'")
+
+
+def validate_container_app_output(
+    phase3_manifest: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    expected_app = phase3_manifest["container_apps"]["public_api"]
+    asset = find_container_app(payload, expected_app["name"])
+    assert_true(
+        asset.get("default_hostname") == expected_app["default_hostname"],
+        "container-apps default hostname mismatch",
+    )
+    assert_true(
+        asset.get("external_ingress_enabled") is expected_app["external_ingress_enabled"],
+        "container-apps external ingress mismatch",
+    )
+    assert_true(
+        asset.get("ingress_target_port") == expected_app["ingress_target_port"],
+        "container-apps ingress target port mismatch",
+    )
+    assert_true(
+        asset.get("revision_mode") == expected_app["revision_mode"],
+        "container-apps revision mode mismatch",
+    )
+    assert_true(
+        asset.get("environment_id") == expected_app["environment_id"],
+        "container-apps environment anchor mismatch",
+    )
+    assert_true(
+        asset.get("workload_identity_type") == expected_app["workload_identity_type"],
+        "container-apps workload identity mismatch",
+    )
+    return (
+        "container-apps surfaced the managed hostname, external ingress, revision mode, "
+        "environment anchor, and identity posture"
+    )
+
+
+def find_container_instance(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    for asset in payload.get("container_instances", []):
+        if asset.get("name") == name:
+            return asset
+    raise AssertionError(f"container-instances output missing asset '{name}'")
+
+
+def validate_container_instance_output(
+    phase3_manifest: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    expected_group = phase3_manifest["container_instances"]["public_web"]
+    asset = find_container_instance(payload, expected_group["name"])
+    assert_true(
+        asset.get("public_ip_address") == expected_group["public_ip_address"],
+        "container-instances public IP mismatch",
+    )
+    assert_true(
+        asset.get("fqdn") == expected_group["fqdn"],
+        "container-instances FQDN mismatch",
+    )
+    assert_true(
+        asset.get("exposed_ports") == expected_group["exposed_ports"],
+        "container-instances exposed ports mismatch",
+    )
+    assert_true(
+        asset.get("restart_policy") == expected_group["restart_policy"],
+        "container-instances restart policy mismatch",
+    )
+    assert_true(
+        asset.get("os_type") == expected_group["os_type"],
+        "container-instances OS type mismatch",
+    )
+    assert_true(
+        asset.get("workload_identity_type") == expected_group["workload_identity_type"],
+        "container-instances workload identity mismatch",
+    )
+    return (
+        "container-instances surfaced the public IP, FQDN, exposed ports, runtime posture, "
+        "and managed identity context"
+    )
 
 
 def find_api_management_service(payload: dict[str, Any], name: str) -> dict[str, Any]:
@@ -1417,6 +1535,7 @@ def validate_outputs(
         checks.append("network-ports surfaced subnet-NSG-backed ingress evidence for the public VM without inferring full reachability")
 
         checks.append(validate_network_effective_output(phase3_manifest, outputs["network-effective"]))
+        checks.append(validate_application_gateway_output(phase3_manifest, outputs["application-gateway"]))
 
         workloads = outputs["workloads"]
         for expected in phase3_manifest["workloads"]["expected_assets"]:
@@ -1487,6 +1606,9 @@ def validate_outputs(
             "functions output lost the AzureWebJobsStorage plain-text deployment signal",
         )
         checks.append("functions surfaced the intended Function App hostname, Key Vault reference, and identity proof")
+
+        checks.append(validate_container_app_output(phase3_manifest, outputs["container-apps"]))
+        checks.append(validate_container_instance_output(phase3_manifest, outputs["container-instances"]))
 
         api_mgmt = outputs["api-mgmt"]
         expected_api_mgmt = phase3_manifest["api_mgmt"]["edge"]
@@ -2121,11 +2243,6 @@ def main() -> int:
     skipped_commands = set(args.skip_command)
     if skipped_commands:
         log_progress(f"[info] skipped standalone commands: {', '.join(sorted(skipped_commands))}")
-    if args.viewpoint != "admin" and args.mode == "full":
-        raise RuntimeError(
-            "--mode full remains the admin release gate. "
-            "Use --mode commands-only for dev or lower-privilege, or use --viewpoint all to run admin plus reduced lanes together."
-        )
     manifest = read_manifest(lab_dir)
 
     viewpoints_to_run = (
@@ -2140,7 +2257,7 @@ def main() -> int:
     overall_results: list[dict[str, Any]] = []
 
     for viewpoint in viewpoints_to_run:
-        effective_mode = args.mode if viewpoint == "admin" else "commands-only"
+        effective_mode = args.mode
         viewpoint_artifacts_dir = artifacts_dir_for_viewpoint(
             artifacts_dir,
             viewpoint,

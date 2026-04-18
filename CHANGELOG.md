@@ -55,10 +55,8 @@ No unreleased entries yet.
 
 ### Added
 
-- Phase 3.5 checkpoint note for the AzureFox `1.1.0` release boundary:
-  `docs/phase3-compute-apps-network-checkpoint.md`
-- Phase 4 live-capture note for the AzureFox `1.2.0` command lane:
-  `docs/phase4-command-discovery-checkpoint.md`
+- archived Phase 3.5 checkpoint note for the AzureFox `1.1.0` release boundary
+- archived Phase 4 live-capture note for the AzureFox `1.2.0` command lane
 
 ### Changed
 
@@ -66,7 +64,7 @@ No unreleased entries yet.
   depth now surfaced by `storage`, `dns`, `api-mgmt`, `aks`, `acr`, and `databases`
 - promoted `snapshots-disks` as the first deterministic Phase 4 validator surface because the
   current lab already deploys a readable VM-backed managed disk
-- updated release-process and README wording to describe the current catch-up boundary truthfully
+- updated README wording to describe the current catch-up boundary truthfully
 - changed validator `full` mode so it no longer bundles `all-checks`; wrapper coverage now remains
   a separate `all-checks-only` decision
 - added heartbeat progress output for slow validator subprocesses so known long Azure API paths such

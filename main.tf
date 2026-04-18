@@ -30,6 +30,14 @@ locals {
   phase3_aks_name                = "aks-ops-${substr(local.unique_suffix, 0, 6)}"
   phase3_aks_dns_prefix          = "aks${substr(local.sanitized_prefix, 0, 8)}${substr(local.unique_suffix, 0, 4)}"
   phase3_acr_name                = substr("acr${local.sanitized_prefix}${local.unique_suffix}", 0, 50)
+  phase3_container_group_name    = "aci-web-${substr(local.unique_suffix, 0, 6)}"
+  phase3_container_group_dns     = "aci${substr(local.sanitized_prefix, 0, 8)}${substr(local.unique_suffix, 0, 4)}"
+  phase3_container_app_env_name  = "cae-ops-${substr(local.unique_suffix, 0, 6)}"
+  phase3_container_app_name      = "ca-public-${substr(local.unique_suffix, 0, 6)}"
+  phase3_log_analytics_name      = "log-aca-${substr(local.sanitized_prefix, 0, 8)}-${substr(local.unique_suffix, 0, 6)}"
+  phase3_app_gateway_name        = "agw-edge-${substr(local.unique_suffix, 0, 6)}"
+  phase3_app_gateway_pip_name    = "pip-agw-${substr(local.unique_suffix, 0, 6)}"
+  phase3_app_gateway_waf_name    = "waf-edge-${substr(local.unique_suffix, 0, 6)}"
   phase3_sql_server_name         = "sql-${substr(local.sanitized_prefix, 0, 8)}-${substr(local.unique_suffix, 0, 6)}"
   phase3_sql_database_name       = "appdb"
   phase3_sql_admin_login         = "afsqladmin"
@@ -732,6 +740,191 @@ resource "azurerm_linux_function_app" "phase2_orders" {
 
   app_settings = {
     PAYMENT_API_KEY = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.open.name};SecretName=payment-api-key)"
+  }
+}
+
+resource "azurerm_log_analytics_workspace" "phase3_container_apps" {
+  name                = local.phase3_log_analytics_name
+  location            = azurerm_resource_group.workload.location
+  resource_group_name = azurerm_resource_group.workload.name
+  retention_in_days   = 30
+  sku                 = "PerGB2018"
+  tags                = local.tags
+}
+
+resource "azurerm_container_app_environment" "phase3_public" {
+  name                       = local.phase3_container_app_env_name
+  location                   = azurerm_resource_group.workload.location
+  resource_group_name        = azurerm_resource_group.workload.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.phase3_container_apps.id
+  tags                       = local.tags
+}
+
+resource "azurerm_container_app" "phase3_public_api" {
+  name                         = local.phase3_container_app_name
+  container_app_environment_id = azurerm_container_app_environment.phase3_public.id
+  resource_group_name          = azurerm_resource_group.workload.name
+  revision_mode                = "Single"
+  tags                         = local.tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.ua_app.id]
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 80
+    transport        = "auto"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 1
+
+    container {
+      name   = "public-api"
+      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      cpu    = 0.5
+      memory = "1.0Gi"
+    }
+  }
+}
+
+resource "azurerm_container_group" "phase3_public_web" {
+  name                = local.phase3_container_group_name
+  location            = azurerm_resource_group.workload.location
+  resource_group_name = azurerm_resource_group.workload.name
+  ip_address_type     = "Public"
+  dns_name_label      = local.phase3_container_group_dns
+  os_type             = "Linux"
+  restart_policy      = "Always"
+  tags                = local.tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.ua_app.id]
+  }
+
+  container {
+    name   = "web"
+    image  = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    cpu    = 0.5
+    memory = 1.0
+
+    ports {
+      port     = 80
+      protocol = "TCP"
+    }
+  }
+
+  exposed_port {
+    port     = 80
+    protocol = "TCP"
+  }
+}
+
+resource "azurerm_subnet" "phase3_application_gateway" {
+  name                 = "snet-app-gateway"
+  resource_group_name  = azurerm_resource_group.network.name
+  virtual_network_name = azurerm_virtual_network.lab.name
+  address_prefixes     = ["10.42.3.0/24"]
+}
+
+resource "azurerm_public_ip" "phase3_application_gateway" {
+  name                = local.phase3_app_gateway_pip_name
+  location            = azurerm_resource_group.network.location
+  resource_group_name = azurerm_resource_group.network.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_web_application_firewall_policy" "phase3_application_gateway" {
+  name                = local.phase3_app_gateway_waf_name
+  location            = azurerm_resource_group.network.location
+  resource_group_name = azurerm_resource_group.network.name
+  tags                = local.tags
+
+  policy_settings {
+    enabled = true
+    mode    = "Prevention"
+  }
+
+  managed_rules {
+    managed_rule_set {
+      type    = "OWASP"
+      version = "3.2"
+    }
+  }
+}
+
+resource "azurerm_application_gateway" "phase3_edge" {
+  name                = local.phase3_app_gateway_name
+  location            = azurerm_resource_group.network.location
+  resource_group_name = azurerm_resource_group.network.name
+  firewall_policy_id  = azurerm_web_application_firewall_policy.phase3_application_gateway.id
+  tags                = local.tags
+
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20220101"
+  }
+
+  sku {
+    name     = "WAF_v2"
+    tier     = "WAF_v2"
+    capacity = 1
+  }
+
+  gateway_ip_configuration {
+    name      = "gateway-ip-config"
+    subnet_id = azurerm_subnet.phase3_application_gateway.id
+  }
+
+  frontend_ip_configuration {
+    name                 = "public-frontend"
+    public_ip_address_id = azurerm_public_ip.phase3_application_gateway.id
+  }
+
+  frontend_port {
+    name = "port-80"
+    port = 80
+  }
+
+  backend_address_pool {
+    name  = "public-api-backend-pool"
+    fqdns = [azurerm_linux_web_app.phase2_public.default_hostname]
+  }
+
+  backend_http_settings {
+    name                                = "public-api-backend-https"
+    cookie_based_affinity               = "Disabled"
+    pick_host_name_from_backend_address = true
+    port                                = 443
+    protocol                            = "Https"
+    request_timeout                     = 30
+  }
+
+  http_listener {
+    name                           = "public-http-listener"
+    frontend_ip_configuration_name = "public-frontend"
+    frontend_port_name             = "port-80"
+    protocol                       = "Http"
+  }
+
+  request_routing_rule {
+    name                       = "public-api-basic-rule"
+    rule_type                  = "Basic"
+    http_listener_name         = "public-http-listener"
+    backend_address_pool_name  = "public-api-backend-pool"
+    backend_http_settings_name = "public-api-backend-https"
+    priority                   = 100
   }
 }
 
